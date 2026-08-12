@@ -1,0 +1,21 @@
+[package]
+name = "geofind-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Import pipeline, indexes, and geocoding service for Geofind."
+rust-version.workspace = true
+
+[dependencies]
+geofind-core = { workspace = true }
+h3o = { workspace = true }
+memmap2 = { workspace = true }
+osmpbf = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tantivy = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

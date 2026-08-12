@@ -1,0 +1,8 @@
+/target/
+/data/
+**/*.osm.pbf
+!testdata/*.osm.pbf
+!testdata/*.osm
+.DS_Store
+*.swp
+.env

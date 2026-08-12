@@ -1,0 +1,11 @@
+[package]
+name = "geofind-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Domain types and traits for the Geofind geocoding engine."
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }

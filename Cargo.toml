@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/geofind-core",
+    "crates/geofind-engine",
+    "crates/geofind",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.75"
+
+[workspace.dependencies]
+geofind-core = { path = "crates/geofind-core" }
+geofind-engine = { path = "crates/geofind-engine" }
+axum = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+h3o = "0.8"
+memmap2 = "0.9"
+osmpbf = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tantivy = "0.22"
+thiserror = "2"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "fs", "io-util"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "timeout"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
