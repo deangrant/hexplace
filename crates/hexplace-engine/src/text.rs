@@ -5,13 +5,13 @@ use std::path::Path;
 
 use hexplace_core::{CoreError, Place, PlaceId, SearchQuery, TextSearcher};
 use tantivy::collector::TopDocs;
-use tantivy::query::QueryParser;
+use tantivy::query::{BooleanQuery, TermQuery};
 use tantivy::schema::{
     Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED, STRING,
 };
-use tantivy::{doc, Index, IndexReader, ReloadPolicy, TantivyDocument};
+use tantivy::{doc, Index, IndexReader, ReloadPolicy, TantivyDocument, Term};
 
-use crate::tokenize::normalize_query;
+use crate::tokenize::{normalize_query, tokenize};
 
 /// Builds a Tantivy index for the given places.
 pub fn build_index(places: &[Place], dir: &Path) -> Result<(), CoreError> {
@@ -97,7 +97,7 @@ fn place_search_text(place: &Place) -> String {
 /// Opened Tantivy text searcher.
 pub struct TantivySearcher {
     reader: IndexReader,
-    query_parser: QueryParser,
+    text_field: Field,
     place_id_field: Field,
 }
 
@@ -118,25 +118,36 @@ impl TantivySearcher {
             .reload_policy(ReloadPolicy::Manual)
             .try_into()
             .map_err(|e| CoreError::index(format!("text reader: {e}")))?;
-        let query_parser = QueryParser::for_index(&index, vec![text_field]);
         Ok(Self {
             reader,
-            query_parser,
+            text_field,
             place_id_field,
         })
     }
 }
 
+fn terms_query(text_field: Field, tokens: &[String]) -> Box<dyn tantivy::query::Query> {
+    let terms: Vec<Term> = tokens
+        .iter()
+        .map(|token| Term::from_field_text(text_field, token))
+        .collect();
+    if terms.len() == 1 {
+        Box::new(TermQuery::new(
+            terms.into_iter().next().unwrap(),
+            IndexRecordOption::WithFreqs,
+        ))
+    } else {
+        Box::new(BooleanQuery::new_multiterms_query(terms))
+    }
+}
+
 impl TextSearcher for TantivySearcher {
     fn search(&self, query: &SearchQuery) -> Result<Vec<(PlaceId, f32)>, CoreError> {
-        let normalized = normalize_query(&query.q);
-        if normalized.is_empty() {
+        let tokens = tokenize(&query.q);
+        if tokens.is_empty() {
             return Err(CoreError::invalid("query has no searchable tokens"));
         }
-        let tq = self
-            .query_parser
-            .parse_query(&normalized)
-            .map_err(|e| CoreError::index(format!("parse query: {e}")))?;
+        let tq = terms_query(self.text_field, &tokens);
         let searcher = self.reader.searcher();
         let top = searcher
             .search(&tq, &TopDocs::with_limit(query.limit))

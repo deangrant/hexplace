@@ -77,6 +77,34 @@ fn import_and_geocode_known_name() {
 }
 
 #[test]
+fn geocode_treats_and_as_literal_term() {
+    let places = vec![Place {
+        place_id: 0,
+        osm_type: OsmType::Node,
+        osm_id: 7,
+        lat: 51.5,
+        lon: -0.1,
+        name: Some("Fish and Chips".into()),
+        display_name: String::new(),
+        category: "amenity".into(),
+        type_name: "fast_food".into(),
+        address: AddressParts::default(),
+        importance: 0.4,
+    }];
+    let dir = tempfile::tempdir().unwrap();
+    import_places(places, dir.path()).unwrap();
+    let engine = Engine::open(EngineConfig::new(dir.path())).unwrap();
+
+    for q in ["fish and chips", "Fish AND Chips"] {
+        let hits = engine.geocode(&SearchQuery::new(q, Some(5)).unwrap()).unwrap();
+        assert!(
+            hits.iter().any(|h| h.name.as_deref() == Some("Fish and Chips")),
+            "expected literal-term hit for query {q:?}, got {hits:?}"
+        );
+    }
+}
+
+#[test]
 fn geocode_importance_rerank_beats_text_top1_cut() {
     // Many same-name low-importance hits would win a BM25-only TopDocs(1)
     // cut; overfetch + importance re-rank should promote the city.
