@@ -1,0 +1,19 @@
+---
+description: Rust formatting and style constraints for Hexplace; defer to style-guide-rust skill
+globs: "**/*.rs"
+alwaysApply: false
+---
+
+# Rust style (Hexplace)
+
+When editing `*.rs`, follow [`.agents/skills/style-guide-rust`](../skills/style-guide-rust/SKILL.md).
+
+Hard limits:
+
+- Max line length **100** (matches `rustfmt.toml`)
+- Max file length **~500** lines; split before landing if near ~450
+- Prefer `#[expect(...)]` over `#[allow(...)]`
+- Prefer early returns / `let-else`
+- Public modules: `//!` docs; `///` before attributes
+
+Do not drive-by reformat or refactor unrelated code. An `afterFileEdit` hook may run `rustfmt` on edited Rust files.

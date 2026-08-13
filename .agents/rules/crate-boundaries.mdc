@@ -1,0 +1,22 @@
+---
+description: Hexplace crate dependency direction and ownership boundaries
+globs: "crates/**/*.rs"
+alwaysApply: false
+---
+
+# Crate boundaries
+
+Dependency direction: `hexplace` → `hexplace-engine` → `hexplace-core`.
+
+| Crate | Owns |
+| --- | --- |
+| `hexplace-core` | Types + traits (`PlaceStore`, `TextSearcher`, `SpatialSearcher`, `Geocoder`) |
+| `hexplace-engine` | Import, mmap columnar store, Tantivy, H3 CSR, `Engine` |
+| `hexplace` | CLI + HTTP; thin handlers over `Geocoder` / `Engine` |
+
+Rules:
+
+- Core must not depend on engine or HTTP types
+- Prefer static dispatch inside the engine; HTTP holds `Arc<Engine>`
+- Put new domain traits in core; wire concretes at the composition root
+- For deeper SOLID guidance, use skill `solid-rust`

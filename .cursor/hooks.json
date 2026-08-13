@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      {
+        "command": ".agents/hooks/rustfmt-after-edit.sh"
+      }
+    ]
+  }
+}

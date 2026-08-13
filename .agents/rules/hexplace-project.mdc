@@ -1,0 +1,26 @@
+---
+description: Hexplace out-of-scope product limits and skill routing
+alwaysApply: true
+---
+
+# Hexplace project
+
+Prefer [`.agents/docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) and
+[README.md](../../README.md) (setup/ops) for domain detail. Use
+[AGENTS.md](../../AGENTS.md) only as an index of rules, skills, commands, and
+hooks.
+
+## Out of scope (do not invent)
+
+- Planet-scale import, sharding, or multi-shard query routing
+- Live minutely / diff replication
+- OSM relation import, admin boundaries, or polygon point-in-polygon hierarchy
+- House-number interpolation along ways
+- Nominatim-style or locale-aware display names
+- Learned / population-based / multilingual importance models
+
+## When unsure
+
+- Architecture / “where does X live” → skill `hexplace-architecture`
+- Import, PBF, indexes, schema bumps → skill `hexplace-import`
+- Before claiming done on Rust work → skill `hexplace-verify` or command `/verify`
