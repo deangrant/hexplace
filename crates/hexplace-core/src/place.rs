@@ -27,7 +27,10 @@ impl OsmType {
         }
     }
 
-    /// Parses a single-letter OSM type code.
+    /// Parses an OSM type code or full type name.
+    ///
+    /// Accepts single-letter codes `N`/`W`/`R` (case-insensitive) and the full
+    /// words `node`, `way`, and `relation`. Returns `None` for anything else.
     pub fn from_code(code: &str) -> Option<Self> {
         match code {
             "N" | "n" | "node" => Some(Self::Node),
@@ -139,5 +142,20 @@ impl PlaceHit {
             address,
             score,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_code_accepts_letters_and_words() {
+        assert_eq!(OsmType::from_code("N"), Some(OsmType::Node));
+        assert_eq!(OsmType::from_code("w"), Some(OsmType::Way));
+        assert_eq!(OsmType::from_code("relation"), Some(OsmType::Relation));
+        assert_eq!(OsmType::from_code("node"), Some(OsmType::Node));
+        assert_eq!(OsmType::from_code("x"), None);
+        assert_eq!(OsmType::from_code("Node"), None);
     }
 }

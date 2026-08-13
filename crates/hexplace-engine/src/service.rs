@@ -40,8 +40,8 @@ pub struct Engine {
     text: Arc<TantivySearcher>,
     spatial: Arc<H3SpatialIndex>,
     /// Shared flock keeping import from publishing over a live serve.
-    #[allow(dead_code)]
-    _data_lock: File,
+    #[expect(dead_code)]
+    data_lock: File,
 }
 
 impl Engine {
@@ -62,7 +62,7 @@ impl Engine {
             store,
             text,
             spatial,
-            _data_lock: data_lock,
+            data_lock,
         })
     }
 
