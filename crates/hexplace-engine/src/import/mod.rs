@@ -1,6 +1,7 @@
 //! OSM PBF import into places and secondary indexes.
 
 pub mod node_store;
+mod publish;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,11 +17,15 @@ use crate::store::PlaceStoreWriter;
 use crate::text;
 
 use self::node_store::{deg_to_e7, e7_to_deg, NodeStore, SparseNodeStore};
+use self::publish::{
+    cleanup_orphans, create_staging_dir, discard_staging, publish_data_dir,
+};
+
+pub use publish::acquire_shared_lock;
 
 /// Imports an OSM PBF file into a Hexplace data directory.
 pub fn import_pbf(pbf_path: &Path, data_dir: &Path) -> Result<Manifest, CoreError> {
-    let paths = DataPaths::new(data_dir);
-    paths.ensure_layout()?;
+    cleanup_orphans(data_dir)?;
 
     info!(path = %pbf_path.display(), "reading OSM PBF");
     let extracted = extract_places(pbf_path)?;
@@ -32,17 +37,50 @@ pub fn import_pbf(pbf_path: &Path, data_dir: &Path) -> Result<Manifest, CoreErro
         ));
     }
 
-    write_indexes(&extracted, &paths)?;
-
     let source_hash = hash_file(pbf_path)?;
     let manifest = Manifest::new(
         pbf_path.display().to_string(),
         source_hash,
         extracted.len() as u64,
     );
-    manifest.save(&paths.manifest())?;
+    finish_import(&extracted, &manifest, data_dir)?;
     info!(places = manifest.place_count, "import complete");
     Ok(manifest)
+}
+
+/// Builds a data directory from an in-memory place list (tests and fixtures).
+pub fn import_places(places: Vec<Place>, data_dir: &Path) -> Result<Manifest, CoreError> {
+    cleanup_orphans(data_dir)?;
+    let mut normalized = Vec::with_capacity(places.len());
+    for mut place in places {
+        ensure_display_name(&mut place);
+        normalized.push(place);
+    }
+    if normalized.is_empty() {
+        return Err(CoreError::import("no places to import"));
+    }
+    let manifest = Manifest::new("memory://places", "0", normalized.len() as u64);
+    finish_import(&normalized, &manifest, data_dir)?;
+    Ok(manifest)
+}
+
+fn finish_import(
+    places: &[Place],
+    manifest: &Manifest,
+    data_dir: &Path,
+) -> Result<(), CoreError> {
+    let staging = create_staging_dir(data_dir)?;
+    let paths = DataPaths::new(&staging);
+    if let Err(e) = (|| {
+        paths.ensure_layout()?;
+        write_indexes(places, &paths)?;
+        manifest.save(&paths.manifest())?;
+        publish_data_dir(&staging, data_dir)
+    })() {
+        discard_staging(&staging);
+        return Err(e);
+    }
+    Ok(())
 }
 
 fn write_indexes(places: &[Place], paths: &DataPaths) -> Result<(), CoreError> {
@@ -271,22 +309,4 @@ fn centroid(refs: &[i64], coords: &SparseNodeStore) -> Option<(f64, f64)> {
     } else {
         Some((sum_lat / n as f64, sum_lon / n as f64))
     }
-}
-
-/// Builds a data directory from an in-memory place list (tests and fixtures).
-pub fn import_places(places: Vec<Place>, data_dir: &Path) -> Result<Manifest, CoreError> {
-    let paths = DataPaths::new(data_dir);
-    paths.ensure_layout()?;
-    let mut normalized = Vec::with_capacity(places.len());
-    for mut place in places {
-        ensure_display_name(&mut place);
-        normalized.push(place);
-    }
-    if normalized.is_empty() {
-        return Err(CoreError::import("no places to import"));
-    }
-    write_indexes(&normalized, &paths)?;
-    let manifest = Manifest::new("memory://places", "0", normalized.len() as u64);
-    manifest.save(&paths.manifest())?;
-    Ok(manifest)
 }

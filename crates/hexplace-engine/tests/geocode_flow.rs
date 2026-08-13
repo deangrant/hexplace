@@ -136,3 +136,50 @@ fn import_pbf_fixture_when_present() {
         "expected Monaco search hits from fixture extract"
     );
 }
+
+#[test]
+fn reimport_replaces_live_tree_atomically() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    import_places(sample_places(), &data).unwrap();
+    let first = Engine::open(EngineConfig::new(&data)).unwrap();
+    assert_eq!(first.manifest().place_count, 3);
+    drop(first);
+
+    let mut fewer = sample_places();
+    fewer.truncate(1);
+    import_places(fewer, &data).unwrap();
+    let second = Engine::open(EngineConfig::new(&data)).unwrap();
+    assert_eq!(second.manifest().place_count, 1);
+
+    let parent = data.parent().unwrap();
+    let name = data.file_name().unwrap().to_str().unwrap();
+    let staging_prefix = format!(".{name}.staging-");
+    let obsolete_prefix = format!(".{name}.obsolete-");
+    for entry in std::fs::read_dir(parent).unwrap() {
+        let name = entry.unwrap().file_name();
+        let name = name.to_string_lossy();
+        assert!(
+            !name.starts_with(&staging_prefix) && !name.starts_with(&obsolete_prefix),
+            "leftover publish sibling: {name}"
+        );
+    }
+}
+
+#[test]
+fn reimport_rejected_while_engine_holds_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    import_places(sample_places(), &data).unwrap();
+    let engine = Engine::open(EngineConfig::new(&data)).unwrap();
+    assert_eq!(engine.manifest().place_count, 3);
+
+    let err = import_places(sample_places(), &data).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("data directory in use"),
+        "unexpected error: {msg}"
+    );
+    assert_eq!(engine.manifest().place_count, 3);
+    assert!(data.join("manifest.json").is_file());
+}

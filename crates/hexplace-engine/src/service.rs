@@ -1,5 +1,6 @@
 //! Geocoding service orchestration.
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,6 +9,7 @@ use hexplace_core::{
     PlaceStore, ReverseQuery, SearchQuery, SpatialSearcher, TextSearcher,
 };
 
+use crate::import::acquire_shared_lock;
 use crate::manifest::{DataPaths, Manifest};
 use crate::ranking::{forward_score, haversine_m, reverse_score};
 use crate::shard::{ShardRouter, SingleShard};
@@ -40,6 +42,9 @@ pub struct Engine {
     spatial: Arc<H3SpatialIndex>,
     #[allow(dead_code)]
     shard_router: Arc<dyn ShardRouter>,
+    /// Shared flock keeping import from publishing over a live serve.
+    #[allow(dead_code)]
+    _data_lock: File,
 }
 
 impl Engine {
@@ -49,6 +54,7 @@ impl Engine {
     /// Opens indexes from an imported data directory.
     pub fn open(config: EngineConfig) -> Result<Self, CoreError> {
         let paths = DataPaths::new(config.data_dir);
+        let data_lock = acquire_shared_lock(&paths.root)?;
         let manifest = Manifest::load(&paths.manifest())?;
         let store = Arc::new(MmapPlaceStore::open(&paths.places())?);
         let text = Arc::new(TantivySearcher::open(&paths.text_dir())?);
@@ -60,6 +66,7 @@ impl Engine {
             text,
             spatial,
             shard_router: Arc::new(SingleShard),
+            _data_lock: data_lock,
         })
     }
 

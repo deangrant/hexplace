@@ -57,6 +57,12 @@ Use regional extracts while developing.
 hexplace import --pbf path/to/region.osm.pbf --data-dir ./data
 ```
 
+Import writes a complete staging tree beside the target, then publishes it with
+directory renames so a failed import cannot leave a torn live index. Stop
+`hexplace serve` before re-importing into the same `--data-dir`, then restart
+serve to load the new indexes (import refuses to publish while serve holds the
+data-directory lock).
+
 Rough guidance:
 
 | Extract size | Typical RAM during import | Notes |

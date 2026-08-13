@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 hexplace-core = { workspace = true }
+fs4 = { workspace = true }
 h3o = { workspace = true }
 memmap2 = { workspace = true }
 osmpbf = { workspace = true }

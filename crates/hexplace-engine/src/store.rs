@@ -235,7 +235,9 @@ impl MmapPlaceStore {
 fn map_file(path: &Path, magic: &[u8; 4]) -> Result<Mmap, CoreError> {
     let file = File::open(path)
         .map_err(|e| CoreError::io(format!("failed to open {}: {e}", path.display())))?;
-    // SAFETY: place files are immutable while serving.
+    // SAFETY: caller must not truncate or overwrite these files in place while
+    // mapped (doing so can SIGBUS). Replace indexes via import publish and
+    // restart the server to load the new data directory.
     let mmap =
         unsafe { Mmap::map(&file) }.map_err(|e| CoreError::io(format!("mmap failed: {e}")))?;
     if mmap.len() < 16 || &mmap[0..4] != magic {
