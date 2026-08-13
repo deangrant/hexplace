@@ -188,18 +188,31 @@ impl Geocoder for Engine {
             let mut handles = Vec::with_capacity(workers);
             for (chunk_idx, chunk) in request.items.chunks(chunk_size).enumerate() {
                 let start = chunk_idx * chunk_size;
-                handles.push(scope.spawn(move || {
-                    let mut local = Vec::with_capacity(chunk.len());
-                    for (offset, item) in chunk.iter().enumerate() {
-                        local.push((start + offset, self.process_item(item)));
-                    }
-                    local
-                }));
+                let end = start + chunk.len();
+                handles.push((
+                    start..end,
+                    scope.spawn(move || {
+                        let mut local = Vec::with_capacity(chunk.len());
+                        for (offset, item) in chunk.iter().enumerate() {
+                            local.push((start + offset, self.process_item(item)));
+                        }
+                        local
+                    }),
+                ));
             }
-            for handle in handles {
-                if let Ok(local) = handle.join() {
-                    for (idx, result) in local {
-                        slots[idx] = Some(result);
+            for (range, handle) in handles {
+                match handle.join() {
+                    Ok(local) => {
+                        for (idx, result) in local {
+                            slots[idx] = Some(result);
+                        }
+                    }
+                    Err(_) => {
+                        for (idx, result) in
+                            batch_worker_error(&request.items, range, "batch worker panicked")
+                        {
+                            slots[idx] = Some(result);
+                        }
                     }
                 }
             }
@@ -207,10 +220,40 @@ impl Geocoder for Engine {
 
         let items = slots
             .into_iter()
-            .map(|slot| slot.expect("batch slot filled"))
+            .enumerate()
+            .map(|(idx, slot)| {
+                slot.unwrap_or_else(|| {
+                    batch_item_error(&request.items[idx], "batch worker panicked")
+                })
+            })
             .collect();
         Ok(BatchResponse { items })
     }
+}
+
+fn batch_item_id(item: &BatchItem) -> Option<String> {
+    match item {
+        BatchItem::Geocode { id, .. } | BatchItem::Reverse { id, .. } => id.clone(),
+    }
+}
+
+fn batch_item_error(item: &BatchItem, message: &str) -> BatchResult {
+    BatchResult {
+        id: batch_item_id(item),
+        results: Vec::new(),
+        error: Some(message.to_owned()),
+    }
+}
+
+/// Builds error results for a panicked worker's index range.
+fn batch_worker_error(
+    items: &[BatchItem],
+    range: std::ops::Range<usize>,
+    message: &str,
+) -> Vec<(usize, BatchResult)> {
+    range
+        .map(|idx| (idx, batch_item_error(&items[idx], message)))
+        .collect()
 }
 
 fn push_best(best: &mut Vec<(f32, PlaceId)>, score: f32, id: PlaceId, limit: usize) {
@@ -225,5 +268,47 @@ fn push_best(best: &mut Vec<(f32, PlaceId)>, score: f32, id: PlaceId, limit: usi
             best.push((score, id));
             best.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_worker_error_fills_range_with_item_ids() {
+        let items = vec![
+            BatchItem::Geocode {
+                id: Some("a".into()),
+                q: "Paris".into(),
+                limit: Some(1),
+            },
+            BatchItem::Reverse {
+                id: Some("b".into()),
+                lat: 48.0,
+                lon: 2.0,
+                limit: Some(1),
+            },
+            BatchItem::Geocode {
+                id: None,
+                q: "Louvre".into(),
+                limit: None,
+            },
+        ];
+        let filled = batch_worker_error(&items, 1..3, "batch worker panicked");
+        assert_eq!(filled.len(), 2);
+        assert_eq!(filled[0].0, 1);
+        assert_eq!(filled[0].1.id.as_deref(), Some("b"));
+        assert_eq!(
+            filled[0].1.error.as_deref(),
+            Some("batch worker panicked")
+        );
+        assert!(filled[0].1.results.is_empty());
+        assert_eq!(filled[1].0, 2);
+        assert_eq!(filled[1].1.id, None);
+        assert_eq!(
+            filled[1].1.error.as_deref(),
+            Some("batch worker panicked")
+        );
     }
 }

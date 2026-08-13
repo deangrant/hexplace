@@ -280,31 +280,42 @@ fn run_reverse_bulk(
         let mut handles = Vec::with_capacity(workers);
         for (chunk_idx, chunk) in points.chunks(chunk_size).enumerate() {
             let start = chunk_idx * chunk_size;
-            handles.push(scope.spawn(move || {
-                let mut local = Vec::with_capacity(chunk.len());
-                for (offset, point) in chunk.iter().enumerate() {
-                    let index = start + offset;
-                    let hit = match ReverseQuery::new(point[0], point[1], Some(1)) {
-                        Ok(query) => match engine.reverse(&query) {
-                            Ok(results) => {
-                                if let Some(top) = results.first() {
-                                    ReverseBulkHit {
-                                        index,
-                                        place_id: Some(top.place_id),
-                                        score: Some(top.score),
-                                        display_name: Some(top.display_name.clone()),
-                                        error: None,
-                                    }
-                                } else {
-                                    ReverseBulkHit {
-                                        index,
-                                        place_id: None,
-                                        score: None,
-                                        display_name: None,
-                                        error: Some("no results".into()),
+            let end = start + chunk.len();
+            handles.push((
+                start..end,
+                scope.spawn(move || {
+                    let mut local = Vec::with_capacity(chunk.len());
+                    for (offset, point) in chunk.iter().enumerate() {
+                        let index = start + offset;
+                        let hit = match ReverseQuery::new(point[0], point[1], Some(1)) {
+                            Ok(query) => match engine.reverse(&query) {
+                                Ok(results) => {
+                                    if let Some(top) = results.first() {
+                                        ReverseBulkHit {
+                                            index,
+                                            place_id: Some(top.place_id),
+                                            score: Some(top.score),
+                                            display_name: Some(top.display_name.clone()),
+                                            error: None,
+                                        }
+                                    } else {
+                                        ReverseBulkHit {
+                                            index,
+                                            place_id: None,
+                                            score: None,
+                                            display_name: None,
+                                            error: Some("no results".into()),
+                                        }
                                     }
                                 }
-                            }
+                                Err(e) => ReverseBulkHit {
+                                    index,
+                                    place_id: None,
+                                    score: None,
+                                    display_name: None,
+                                    error: Some(e.to_string()),
+                                },
+                            },
                             Err(e) => ReverseBulkHit {
                                 index,
                                 place_id: None,
@@ -312,24 +323,30 @@ fn run_reverse_bulk(
                                 display_name: None,
                                 error: Some(e.to_string()),
                             },
-                        },
-                        Err(e) => ReverseBulkHit {
-                            index,
+                        };
+                        local.push((index, hit));
+                    }
+                    local
+                }),
+            ));
+        }
+        for (range, handle) in handles {
+            match handle.join() {
+                Ok(local) => {
+                    for (idx, hit) in local {
+                        slots[idx] = Some(hit);
+                    }
+                }
+                Err(_) => {
+                    for idx in range {
+                        slots[idx] = Some(ReverseBulkHit {
+                            index: idx,
                             place_id: None,
                             score: None,
                             display_name: None,
-                            error: Some(e.to_string()),
-                        },
-                    };
-                    local.push((index, hit));
-                }
-                local
-            }));
-        }
-        for handle in handles {
-            if let Ok(local) = handle.join() {
-                for (idx, hit) in local {
-                    slots[idx] = Some(hit);
+                            error: Some("bulk worker panicked".into()),
+                        });
+                    }
                 }
             }
         }
@@ -337,7 +354,16 @@ fn run_reverse_bulk(
 
     Ok(slots
         .into_iter()
-        .map(|slot| slot.expect("bulk slot filled"))
+        .enumerate()
+        .map(|(idx, slot)| {
+            slot.unwrap_or_else(|| ReverseBulkHit {
+                index: idx,
+                place_id: None,
+                score: None,
+                display_name: None,
+                error: Some("bulk worker panicked".into()),
+            })
+        })
         .collect())
 }
 
