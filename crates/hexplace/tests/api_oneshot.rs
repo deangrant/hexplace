@@ -61,6 +61,26 @@ async fn health_ok() {
 }
 
 #[tokio::test]
+async fn status_ready_without_source_path() {
+    let app = router(AppState::new(seed_engine()));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json["status"], "ready");
+    assert!(json.get("source_hash").and_then(|v| v.as_str()).is_some());
+    assert!(json.get("source_path").is_none());
+    assert!(json["place_count"].as_u64().unwrap() >= 1);
+}
+
+#[tokio::test]
 async fn geocode_and_reverse_and_batch() {
     let app = router(AppState::new(seed_engine()));
 
@@ -139,4 +159,43 @@ async fn reverse_bulk_ndjson() {
     assert_eq!(lines.len(), 2);
     let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     assert!(first.get("place_id").is_some() || first.get("error").is_some());
+}
+
+#[tokio::test]
+async fn reverse_bulk_binary_present_flag() {
+    let app = router(AppState::new(seed_engine()));
+    // Hit near Monaco, then a mid-ocean miss.
+    let body = serde_json::json!({
+        "points": [[43.7384, 7.4246], [0.0, -150.0]]
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/reverse/bulk")
+                .header("content-type", "application/json")
+                .header("accept", "application/octet-stream")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(bytes.len(), 26);
+
+    let hit_present = bytes[0];
+    let hit_id = u64::from_le_bytes(bytes[1..9].try_into().unwrap());
+    let hit_score = f32::from_le_bytes(bytes[9..13].try_into().unwrap());
+    assert_eq!(hit_present, 1);
+    assert_eq!(hit_id, 0);
+    assert!(hit_score.is_finite());
+    assert!(hit_score > 0.0);
+
+    let miss_present = bytes[13];
+    let miss_id = u64::from_le_bytes(bytes[14..22].try_into().unwrap());
+    let miss_score = f32::from_le_bytes(bytes[22..26].try_into().unwrap());
+    assert_eq!(miss_present, 0);
+    assert_eq!(miss_id, 0);
+    assert_eq!(miss_score, 0.0);
 }

@@ -82,7 +82,9 @@ hexplace serve
 ```
 
 Put a reverse proxy in front for TLS. Use `/v1/health` for liveness and
-`/v1/status` for readiness (index loaded and manifest readable).
+`/v1/status` for readiness (index loaded and manifest readable). Status returns
+schema/place counts, H3 resolutions, format markers, `built_at_unix`, and
+`source_hash` — not the local import filesystem path.
 
 ## Batch CLI
 
@@ -105,6 +107,10 @@ curl -s -H 'content-type: application/json' \
   --data '{"points":[[43.7384,7.4246],[43.7310,7.4210]]}' \
   http://127.0.0.1:8080/v1/reverse/bulk
 ```
+
+With `Accept: application/octet-stream`, each hit is 13 little-endian bytes:
+`u8 present`, `u64 place_id`, `f32 score`. `present == 0` means miss or error
+(`place_id` and `score` are then zero).
 
 ## Reverse bench
 

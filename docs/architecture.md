@@ -64,8 +64,8 @@ warm indexes. Up to 100,000 items per request.
 ### Bulk reverse (`/v1/reverse/bulk`)
 
 Accept JSON `{"points":[[lat,lon],...]}` or packed `f32` pairs. Return NDJSON
-or packed binary `(u64 place_id, f32 score)` based on `Accept`. Parallelized
-the same way as batch.
+or packed binary `(u8 present, u64 place_id, f32 score)` based on `Accept`
+(`present == 0` for miss/error). Parallelized the same way as batch.
 
 ## Planet scale-up (future)
 

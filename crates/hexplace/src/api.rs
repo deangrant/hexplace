@@ -36,6 +36,8 @@ impl AppState {
 
 /// Max JSON body size for bulk endpoints.
 const BATCH_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+/// Packed reverse-bulk hit: `u8 present` + `u64 place_id` + `f32 score`.
+const BINARY_BULK_HIT_BYTES: usize = 13;
 /// Request timeout for lightweight endpoints.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Request timeout for large batch jobs.
@@ -125,7 +127,7 @@ struct StatusResponse {
     status: &'static str,
     schema_version: u32,
     place_count: u64,
-    source_path: String,
+    source_hash: String,
     h3_resolution_fine: u8,
     h3_resolution_coarse: u8,
     store_format: String,
@@ -139,7 +141,7 @@ async fn status(State(state): State<AppState>) -> Json<StatusResponse> {
         status: "ready",
         schema_version: m.schema_version,
         place_count: m.place_count,
-        source_path: m.source_path.clone(),
+        source_hash: m.source_hash.clone(),
         h3_resolution_fine: m.h3_resolution_fine,
         h3_resolution_coarse: m.h3_resolution_coarse,
         store_format: m.store_format.clone(),
@@ -379,12 +381,20 @@ fn ndjson_bulk_response(hits: &[ReverseBulkHit]) -> Result<Response, ApiError> {
 }
 
 fn binary_bulk_response(hits: &[ReverseBulkHit]) -> Response {
-    let mut bytes = Vec::with_capacity(hits.len() * 12);
+    let mut bytes = Vec::with_capacity(hits.len() * BINARY_BULK_HIT_BYTES);
     for hit in hits {
-        let id = hit.place_id.unwrap_or(u64::MAX);
-        let score = hit.score.unwrap_or(f32::NAN);
-        bytes.extend_from_slice(&id.to_le_bytes());
-        bytes.extend_from_slice(&score.to_le_bytes());
+        match (hit.place_id, hit.score) {
+            (Some(id), Some(score)) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&id.to_le_bytes());
+                bytes.extend_from_slice(&score.to_le_bytes());
+            }
+            _ => {
+                bytes.push(0);
+                bytes.extend_from_slice(&0u64.to_le_bytes());
+                bytes.extend_from_slice(&0f32.to_le_bytes());
+            }
+        }
     }
     ([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response()
 }
