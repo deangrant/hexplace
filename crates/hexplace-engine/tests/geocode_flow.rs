@@ -77,6 +77,56 @@ fn import_and_geocode_known_name() {
 }
 
 #[test]
+fn geocode_importance_rerank_beats_text_top1_cut() {
+    // Many same-name low-importance hits would win a BM25-only TopDocs(1)
+    // cut; overfetch + importance re-rank should promote the city.
+    let mut places = Vec::new();
+    for i in 0..20u64 {
+        places.push(Place {
+            place_id: 0,
+            osm_type: OsmType::Node,
+            osm_id: 1000 + i,
+            lat: 40.0 + (i as f64) * 0.01,
+            lon: -90.0,
+            name: Some("Springfield".into()),
+            display_name: String::new(),
+            category: "amenity".into(),
+            type_name: "cafe".into(),
+            address: AddressParts::default(),
+            importance: 0.1,
+        });
+    }
+    places.push(Place {
+        place_id: 0,
+        osm_type: OsmType::Node,
+        osm_id: 42,
+        lat: 39.7817,
+        lon: -89.6501,
+        name: Some("Springfield".into()),
+        display_name: String::new(),
+        category: "place".into(),
+        type_name: "city".into(),
+        address: AddressParts {
+            city: Some("Springfield".into()),
+            ..AddressParts::default()
+        },
+        importance: 0.9,
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    import_places(places, dir.path()).unwrap();
+    let engine = Engine::open(EngineConfig::new(dir.path())).unwrap();
+    let hits = engine
+        .geocode(&SearchQuery::new("Springfield", Some(1)).unwrap())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].name.as_deref(), Some("Springfield"));
+    assert_eq!(hits[0].category, "place");
+    assert_eq!(hits[0].type_name, "city");
+    assert_eq!(hits[0].osm_id, 42);
+}
+
+#[test]
 fn import_and_reverse_known_point() {
     let dir = tempfile::tempdir().unwrap();
     import_places(sample_places(), dir.path()).unwrap();

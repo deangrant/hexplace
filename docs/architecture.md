@@ -45,8 +45,9 @@ as shared state.
 
 ### Forward (`/v1/geocode`)
 
-Normalize tokens → Tantivy query → hydrate places from columnar store →
-combine text score with importance → truncate to `limit`.
+Normalize tokens → Tantivy query (up to `SearchQuery::MAX_LIMIT`
+candidates) → hydrate places from columnar store → combine text score
+with importance → truncate to the request `limit`.
 
 ### Reverse (`/v1/reverse`)
 

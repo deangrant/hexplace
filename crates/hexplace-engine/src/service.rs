@@ -131,7 +131,13 @@ impl Engine {
 
 impl Geocoder for Engine {
     fn geocode(&self, query: &SearchQuery) -> Result<Vec<PlaceHit>, CoreError> {
-        let hits = self.text.search(query)?;
+        // Overfetch text hits so importance re-rank can promote places
+        // that fall outside BM25 top-`query.limit`.
+        let text_query = SearchQuery {
+            q: query.q.clone(),
+            limit: SearchQuery::MAX_LIMIT,
+        };
+        let hits = self.text.search(&text_query)?;
         let mut results = Vec::with_capacity(hits.len());
         for (id, score) in hits {
             let place = self.store.get(id)?;
