@@ -167,6 +167,49 @@ fn import_and_reverse_known_point() {
 }
 
 #[test]
+fn reverse_skips_out_of_range_place_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let places = vec![sample_places().into_iter().next().unwrap()];
+    import_places(places, dir.path()).unwrap();
+
+    // Keep fine cells; expand the single cell's postings with a bogus id.
+    let fine = dir.path().join("spatial/fine");
+    write_u64_column(&fine.join("cell_offsets.bin"), b"GFOF", &[0, 2]);
+    write_u32_column(&fine.join("postings.bin"), b"GFPO", &[0, 999_999]);
+
+    let engine = Engine::open(EngineConfig::new(dir.path())).unwrap();
+    let hits = engine
+        .reverse(&ReverseQuery::new(48.8566, 2.3522, Some(3)).unwrap())
+        .unwrap();
+    assert!(
+        hits.iter().any(|h| h.name.as_deref() == Some("Paris")),
+        "expected Paris despite bogus posting id, got {hits:?}"
+    );
+}
+
+fn write_u64_column(path: &std::path::Path, magic: &[u8; 4], values: &[u64]) {
+    use std::io::Write;
+    let mut out = std::fs::File::create(path).unwrap();
+    out.write_all(magic).unwrap();
+    out.write_all(&2u32.to_le_bytes()).unwrap();
+    out.write_all(&(values.len() as u64).to_le_bytes()).unwrap();
+    for v in values {
+        out.write_all(&v.to_le_bytes()).unwrap();
+    }
+}
+
+fn write_u32_column(path: &std::path::Path, magic: &[u8; 4], values: &[u32]) {
+    use std::io::Write;
+    let mut out = std::fs::File::create(path).unwrap();
+    out.write_all(magic).unwrap();
+    out.write_all(&2u32.to_le_bytes()).unwrap();
+    out.write_all(&(values.len() as u64).to_le_bytes()).unwrap();
+    for v in values {
+        out.write_all(&v.to_le_bytes()).unwrap();
+    }
+}
+
+#[test]
 fn batch_mixed_operations() {
     let dir = tempfile::tempdir().unwrap();
     import_places(sample_places(), dir.path()).unwrap();

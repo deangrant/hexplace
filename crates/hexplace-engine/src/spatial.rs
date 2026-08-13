@@ -374,7 +374,7 @@ impl SpatialSearcher for H3SpatialIndex {
                 }
             }
         }
-        if ids.is_empty() {
+        if ids.len() < query.limit {
             let coarse = ll.to_cell(self.coarse_res);
             for id in self.coarse.lookup_cell_ids(u64::from(coarse)) {
                 if seen.insert(id) {
@@ -439,15 +439,23 @@ mod tests {
     fn empty_fine_falls_back_to_coarse() {
         let dir = tempfile::tempdir().unwrap();
         let paths = SpatialPaths::new(dir.path().join("spatial"));
-        // Place in Paris.
+        // Place in Paris — present in both fine and coarse after build.
         let places = vec![place(0, 48.8566, 2.3522, 0.9)];
         build_index(&places, &paths).unwrap();
+
+        // Empty the fine layer so candidates must come from coarse.
+        let fine = paths.fine();
+        write_u64_file(&fine.cells(), CELLS_MAGIC, &[]).unwrap();
+        write_u64_file(&fine.offsets(), OFFSETS_MAGIC, &[0]).unwrap();
+        write_u32_file(&fine.postings(), POSTINGS_MAGIC, &[]).unwrap();
+
         let index = H3SpatialIndex::open(&paths).unwrap();
-        // Query a few km away within same coarse cell neighborhood.
-        let q = ReverseQuery::new(48.87, 2.36, Some(1)).unwrap();
+        let q = ReverseQuery::new(48.8566, 2.3522, Some(1)).unwrap();
         let ids = index.candidates(&q).unwrap();
-        // May find via ring expand or coarse; either way should not panic.
-        let _ = ids;
+        assert!(
+            ids.contains(&0),
+            "expected coarse fallback to return place 0, got {ids:?}"
+        );
     }
 
     fn build_sample_index() -> (tempfile::TempDir, SpatialPaths) {

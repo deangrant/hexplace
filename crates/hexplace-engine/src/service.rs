@@ -140,7 +140,9 @@ impl Geocoder for Engine {
         let hits = self.text.search(&text_query)?;
         let mut results = Vec::with_capacity(hits.len());
         for (id, score) in hits {
-            let place = self.store.get(id)?;
+            let Ok(place) = self.store.get(id) else {
+                continue;
+            };
             let combined = forward_score(score, &place);
             results.push(PlaceHit::from_place(&place, combined));
         }
@@ -157,15 +159,21 @@ impl Geocoder for Engine {
         let candidates = self.spatial.candidates(query)?;
         let mut best: Vec<(f32, PlaceId)> = Vec::with_capacity(query.limit);
         for id in candidates {
-            let (lat, lon) = self.store.coord(id)?;
-            let importance = self.store.importance(id)?;
+            let Ok((lat, lon)) = self.store.coord(id) else {
+                continue;
+            };
+            let Ok(importance) = self.store.importance(id) else {
+                continue;
+            };
             let distance = haversine_m(query.point.lat, query.point.lon, lat, lon);
             let score = reverse_score(distance, importance);
             push_best(&mut best, score, id, query.limit);
         }
         let mut results = Vec::with_capacity(best.len());
         for (score, id) in best {
-            let place = self.store.get(id)?;
+            let Ok(place) = self.store.get(id) else {
+                continue;
+            };
             results.push(PlaceHit::from_place(&place, score));
         }
         Ok(results)

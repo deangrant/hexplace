@@ -52,8 +52,9 @@ with importance → truncate to the request `limit`.
 ### Reverse (`/v1/reverse`)
 
 Convert lat/lon to a fine H3 cell → CSR postings slice → ring-expand if
-under-populated → coarse fallback if empty → rank by distance using
-`coords.bin` only → hydrate string fields for the `limit` winners.
+under-populated → coarse fallback if still empty or under the request
+`limit` → rank by distance using `coords.bin` only → hydrate string
+fields for the `limit` winners.
 
 ### Batch (`/v1/batch`)
 
