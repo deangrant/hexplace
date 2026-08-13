@@ -165,7 +165,9 @@ fn extract_places(pbf_path: &Path) -> Result<Vec<Place>, CoreError> {
                     places.push(place);
                 }
             }
-            Element::Relation(_) => {}
+            Element::Relation(_) => {
+                // Relations (admin boundaries, multipolygon POIs) are not imported.
+            }
         })
         .map_err(|e| CoreError::import(format!("PBF read failed: {e}")))?;
 
@@ -191,15 +193,14 @@ fn is_address(tags: &[(String, String)]) -> bool {
     map.contains_key("addr:housenumber") && map.contains_key("addr:street")
 }
 
-fn is_place_feature(tags: &[(String, String)]) -> bool {
-    let map = tag_map(tags);
-    map.contains_key("place")
-        || map.contains_key("amenity")
-        || map.contains_key("shop")
-        || map.contains_key("tourism")
-        || map.contains_key("leisure")
-        || map.contains_key("office")
-        || map.contains_key("building")
+/// Returns a lowercase ISO 3166-1 alpha-2 code when `value` is two ASCII letters.
+fn iso2_code(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1].is_ascii_alphabetic() {
+        Some(value.to_ascii_lowercase())
+    } else {
+        None
+    }
 }
 
 fn place_from_tags(
@@ -210,10 +211,7 @@ fn place_from_tags(
     tags: &[(String, String)],
 ) -> Option<Place> {
     let map = tag_map(tags);
-    let searchable = has_searchable_name(tags)
-        || is_address(tags)
-        || (is_place_feature(tags) && has_searchable_name(tags))
-        || is_named_highway(tags);
+    let searchable = has_searchable_name(tags) || is_address(tags);
     if !searchable {
         return None;
     }
@@ -222,6 +220,11 @@ fn place_from_tags(
         .get("name")
         .or_else(|| map.get("name:en"))
         .map(|s| (*s).to_owned());
+
+    let country_code = map
+        .get("ISO3166-1:alpha2")
+        .and_then(|s| iso2_code(s))
+        .or_else(|| map.get("addr:country").and_then(|s| iso2_code(s)));
 
     let address = AddressParts {
         house_number: map.get("addr:housenumber").map(|s| (*s).to_owned()),
@@ -236,10 +239,7 @@ fn place_from_tags(
             .map(|s| (*s).to_owned()),
         postcode: map.get("addr:postcode").map(|s| (*s).to_owned()),
         country: map.get("addr:country").map(|s| (*s).to_owned()),
-        country_code: map
-            .get("addr:country")
-            .filter(|s| s.len() == 2)
-            .map(|s| s.to_ascii_lowercase()),
+        country_code,
     };
 
     let (category, type_name) = classify(&map);
@@ -308,5 +308,78 @@ fn centroid(refs: &[i64], coords: &SparseNodeStore) -> Option<(f64, f64)> {
         None
     } else {
         Some((sum_lat / n as f64, sum_lon / n as f64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tags(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn country_code_prefers_iso3166_alpha2() {
+        let place = place_from_tags(
+            OsmType::Node,
+            1,
+            0.0,
+            0.0,
+            &tags(&[
+                ("name", "Berlin"),
+                ("place", "city"),
+                ("addr:country", "Germany"),
+                ("ISO3166-1:alpha2", "DE"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(place.address.country.as_deref(), Some("Germany"));
+        assert_eq!(place.address.country_code.as_deref(), Some("de"));
+    }
+
+    #[test]
+    fn country_code_from_two_letter_addr_country() {
+        let place = place_from_tags(
+            OsmType::Node,
+            2,
+            0.0,
+            0.0,
+            &tags(&[
+                ("name", "Paris"),
+                ("place", "city"),
+                ("addr:country", "fr"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(place.address.country.as_deref(), Some("fr"));
+        assert_eq!(place.address.country_code.as_deref(), Some("fr"));
+    }
+
+    #[test]
+    fn named_amenity_is_searchable() {
+        let place = place_from_tags(
+            OsmType::Node,
+            3,
+            0.0,
+            0.0,
+            &tags(&[("name", "Cafe"), ("amenity", "cafe")]),
+        );
+        assert!(place.is_some());
+    }
+
+    #[test]
+    fn unnamed_amenity_without_address_is_dropped() {
+        let place = place_from_tags(
+            OsmType::Node,
+            4,
+            0.0,
+            0.0,
+            &tags(&[("amenity", "cafe")]),
+        );
+        assert!(place.is_none());
     }
 }

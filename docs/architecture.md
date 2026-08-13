@@ -34,8 +34,10 @@ as shared state.
 2. Collect node coordinates in a `SparseNodeStore` (sorted id array) for way
    centroids on regional extracts. A `FlatNodeStore` impl exists for
    planet-capable imports but is not used by the default extract path.
-3. Keep searchable objects: named places, address nodes, named highways, and
-   common POI tags.
+3. Keep searchable objects from **nodes and ways only**: named places (including
+   named POIs/highways) and address features with housenumber+street. **OSM
+   relations are not imported**, so admin boundaries and multipolygon POIs are
+   absent.
 4. Assign dense `place_id` values and write columnar place files under
    `places/` (`coords.bin`, `meta.bin`, `strings.bin`).
 5. Build a Tantivy document per place from names and address fields.
@@ -84,6 +86,7 @@ Those changes should not require redesigning the HTTP API.
 
 - Actually importing a planet file
 - Live minutely / diff replication
-- Full administrative polygon point-in-polygon hierarchy
+- OSM relation import (admin boundaries, multipolygon POIs) and full
+  administrative polygon point-in-polygon hierarchy
 - House-number interpolation along ways
 - Multilingual importance models beyond tag heuristics
