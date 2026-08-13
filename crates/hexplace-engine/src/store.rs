@@ -157,10 +157,9 @@ fn write_meta_and_strings(
     let mut strings = BufWriter::new(strings_file);
     strings.write_all(STRINGS_MAGIC)?;
     strings.write_all(&VERSION.to_le_bytes())?;
-    // Placeholder length; rewritten as we go via cursor.
-    let mut cursor = 8u64; // after magic+version
-                           // Actually strings layout: magic(4)+version(4)+blob...
-                           // str_off is absolute offset into the strings file.
+    // strings.bin: magic(4) + version(4) + concatenated NUL-terminated blobs.
+    // Meta str_off is the absolute file offset of each blob; cursor starts at 8.
+    let mut cursor = 8u64;
 
     for place in places {
         let encoded = encode_strings(place)?;

@@ -42,16 +42,23 @@ impl SearchQuery {
     /// Hard upper bound on result count.
     pub const MAX_LIMIT: usize = 50;
 
-    /// Creates a query after normalizing the text and clamping the limit.
+    /// Creates a query after normalizing the text and validating the limit.
+    ///
+    /// Omitted limits use [`Self::DEFAULT_LIMIT`]. Explicit `0` is rejected;
+    /// values above [`Self::MAX_LIMIT`] are capped.
     pub fn new(q: impl Into<String>, limit: Option<usize>) -> Result<Self, CoreError> {
         let q = q.into();
         let trimmed = q.trim();
         if trimmed.is_empty() {
             return Err(CoreError::invalid("query must not be empty"));
         }
-        let limit = limit
-            .unwrap_or(Self::DEFAULT_LIMIT)
-            .clamp(1, Self::MAX_LIMIT);
+        let limit = match limit {
+            None => Self::DEFAULT_LIMIT,
+            Some(0) => {
+                return Err(CoreError::invalid("limit must be at least 1"));
+            }
+            Some(n) => n.min(Self::MAX_LIMIT),
+        };
         Ok(Self {
             q: trimmed.to_owned(),
             limit,
@@ -74,12 +81,19 @@ impl ReverseQuery {
     /// Hard upper bound on result count.
     pub const MAX_LIMIT: usize = 50;
 
-    /// Creates a reverse query with a clamped limit.
+    /// Creates a reverse query with a validated limit.
+    ///
+    /// Omitted limits use [`Self::DEFAULT_LIMIT`]. Explicit `0` is rejected;
+    /// values above [`Self::MAX_LIMIT`] are capped.
     pub fn new(lat: f64, lon: f64, limit: Option<usize>) -> Result<Self, CoreError> {
         let point = GeoPoint::new(lat, lon)?;
-        let limit = limit
-            .unwrap_or(Self::DEFAULT_LIMIT)
-            .clamp(1, Self::MAX_LIMIT);
+        let limit = match limit {
+            None => Self::DEFAULT_LIMIT,
+            Some(0) => {
+                return Err(CoreError::invalid("limit must be at least 1"));
+            }
+            Some(n) => n.min(Self::MAX_LIMIT),
+        };
         Ok(Self { point, limit })
     }
 }

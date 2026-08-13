@@ -14,6 +14,12 @@ fn search_clamps_limit() {
 }
 
 #[test]
+fn search_rejects_zero_limit() {
+    let err = SearchQuery::new("paris", Some(0)).unwrap_err();
+    assert!(err.to_string().contains("limit must be at least 1"));
+}
+
+#[test]
 fn geo_point_rejects_bad_lat() {
     assert!(GeoPoint::new(100.0, 0.0).is_err());
 }
@@ -22,4 +28,10 @@ fn geo_point_rejects_bad_lat() {
 fn reverse_defaults_limit_to_one() {
     let q = ReverseQuery::new(1.0, 2.0, None).unwrap();
     assert_eq!(q.limit, 1);
+}
+
+#[test]
+fn reverse_rejects_zero_limit() {
+    let err = ReverseQuery::new(1.0, 2.0, Some(0)).unwrap_err();
+    assert!(err.to_string().contains("limit must be at least 1"));
 }
