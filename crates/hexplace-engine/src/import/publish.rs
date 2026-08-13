@@ -5,7 +5,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fs4::fs_std::FileExt;
+use fs4::{FileExt, TryLockError};
 use hexplace_core::CoreError;
 
 /// Lock file held shared by serve and exclusive during publish.
@@ -152,9 +152,9 @@ fn acquire_exclusive_lock(data_dir: &Path) -> Result<File, CoreError> {
         .truncate(true)
         .open(&path)
         .map_err(|e| CoreError::io(format!("failed to open {}: {e}", path.display())))?;
-    match FileExt::try_lock_exclusive(&file) {
+    match FileExt::try_lock(&file) {
         Ok(()) => Ok(file),
-        Err(e) if e.kind() == ErrorKind::WouldBlock => Err(CoreError::import(
+        Err(TryLockError::WouldBlock) => Err(CoreError::import(
             "data directory in use; stop serve before re-importing",
         )),
         Err(e) => Err(CoreError::io(format!(

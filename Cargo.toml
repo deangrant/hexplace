@@ -17,7 +17,7 @@ hexplace-core = { path = "crates/hexplace-core" }
 hexplace-engine = { path = "crates/hexplace-engine" }
 axum = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
-fs4 = { version = "0.12", features = ["sync"] }
+fs4 = { version = "1.1", features = ["sync"] }
 h3o = "0.8"
 memmap2 = "0.9"
 osmpbf = "0.3"
