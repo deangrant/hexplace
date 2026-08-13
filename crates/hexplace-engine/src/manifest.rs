@@ -69,7 +69,7 @@ pub struct Manifest {
     pub schema_version: u32,
     /// Source PBF path as provided at import time.
     pub source_path: String,
-    /// Hex-encoded FNV-1a hash of the source file bytes (sampled for large files).
+    /// Hex-encoded SHA-256 of the full source file bytes.
     pub source_hash: String,
     /// Number of indexed places.
     pub place_count: u64,
@@ -145,29 +145,62 @@ impl Manifest {
     }
 }
 
-/// Computes a fast content fingerprint for import provenance.
+/// Computes a SHA-256 digest of the full file for import provenance.
 pub fn hash_file(path: &Path) -> Result<String, CoreError> {
     use std::io::Read;
 
+    use sha2::{Digest, Sha256};
+
     let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
-    let mut hash: u64 = 0xcbf29ce484222325;
-    let mut total = 0usize;
-    const LIMIT: usize = 8 * 1024 * 1024;
     loop {
-        if total >= LIMIT {
-            break;
-        }
-        let want = (LIMIT - total).min(buf.len());
-        let n = file.read(&mut buf[..want])?;
+        let n = file.read(&mut buf)?;
         if n == 0 {
             break;
         }
-        for &b in &buf[..n] {
-            hash ^= u64::from(b);
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
-        total += n;
+        hasher.update(&buf[..n]);
     }
-    Ok(format!("{hash:016x}"))
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn hash_file_matches_known_sha256() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.bin");
+        fs::write(&path, b"hello").unwrap();
+        let digest = hash_file(&path).unwrap();
+        assert_eq!(
+            digest,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+    }
+
+    #[test]
+    fn hash_file_covers_bytes_past_eight_mib() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = vec![0u8; 8 * 1024 * 1024];
+        let a_path = dir.path().join("a.bin");
+        let b_path = dir.path().join("b.bin");
+        {
+            let mut a = fs::File::create(&a_path).unwrap();
+            a.write_all(&prefix).unwrap();
+            a.write_all(b"A").unwrap();
+        }
+        {
+            let mut b = fs::File::create(&b_path).unwrap();
+            b.write_all(&prefix).unwrap();
+            b.write_all(b"B").unwrap();
+        }
+        let ha = hash_file(&a_path).unwrap();
+        let hb = hash_file(&b_path).unwrap();
+        assert_ne!(ha, hb);
+        assert_eq!(ha.len(), 64);
+        assert_eq!(hb.len(), 64);
+    }
 }

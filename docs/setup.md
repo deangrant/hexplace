@@ -84,7 +84,8 @@ hexplace serve
 Put a reverse proxy in front for TLS. Use `/v1/health` for liveness and
 `/v1/status` for readiness (index loaded and manifest readable). Status returns
 schema/place counts, H3 resolutions, format markers, `built_at_unix`, and
-`source_hash` — not the local import filesystem path.
+`source_hash` (SHA-256 of the imported PBF contents) — not the local import
+filesystem path.
 
 ## Batch CLI
 
