@@ -267,18 +267,20 @@ fn batch_worker_error(
 }
 
 fn push_best(best: &mut Vec<(f32, PlaceId)>, score: f32, id: PlaceId, limit: usize) {
-    if best.len() < limit {
-        best.push((score, id));
-        best.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    if limit == 0 {
         return;
     }
-    if let Some((worst, _)) = best.last() {
-        if score > *worst {
-            best.pop();
-            best.push((score, id));
-            best.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    if best.len() == limit {
+        let Some((worst, _)) = best.last() else {
+            return;
+        };
+        if score <= *worst {
+            return;
         }
+        best.pop();
     }
+    let idx = best.partition_point(|&(s, _)| s > score);
+    best.insert(idx, (score, id));
 }
 
 #[cfg(test)]
@@ -320,5 +322,16 @@ mod tests {
             filled[1].1.error.as_deref(),
             Some("batch worker panicked")
         );
+    }
+
+    #[test]
+    fn push_best_keeps_descending_top_n() {
+        let mut best = Vec::new();
+        push_best(&mut best, 0.2, 2, 3);
+        push_best(&mut best, 0.9, 9, 3);
+        push_best(&mut best, 0.5, 5, 3);
+        push_best(&mut best, 0.1, 1, 3);
+        push_best(&mut best, 0.7, 7, 3);
+        assert_eq!(best, vec![(0.9, 9), (0.7, 7), (0.5, 5)]);
     }
 }

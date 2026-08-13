@@ -354,19 +354,11 @@ impl SpatialSearcher for H3SpatialIndex {
                 ids.push(id);
             }
         }
-        if ids.len() < query.limit {
-            let neighbors: Vec<_> = cell.grid_disk(1);
-            for neighbor in neighbors {
-                for id in self.fine.lookup_cell_ids(u64::from(neighbor)) {
-                    if seen.insert(id) {
-                        ids.push(id);
-                    }
-                }
+        for k in 1..=2 {
+            if ids.len() >= query.limit {
+                break;
             }
-        }
-        if ids.len() < query.limit {
-            let neighbors: Vec<_> = cell.grid_disk(2);
-            for neighbor in neighbors {
+            for neighbor in cell.grid_ring_fast(k).flatten() {
                 for id in self.fine.lookup_cell_ids(u64::from(neighbor)) {
                     if seen.insert(id) {
                         ids.push(id);

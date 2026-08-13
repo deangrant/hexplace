@@ -43,7 +43,7 @@ pub fn import_pbf(pbf_path: &Path, data_dir: &Path) -> Result<Manifest, CoreErro
         source_hash,
         extracted.len() as u64,
     );
-    finish_import(&extracted, &manifest, data_dir)?;
+    finish_import(extracted, &manifest, data_dir)?;
     info!(places = manifest.place_count, "import complete");
     Ok(manifest)
 }
@@ -60,12 +60,12 @@ pub fn import_places(places: Vec<Place>, data_dir: &Path) -> Result<Manifest, Co
         return Err(CoreError::import("no places to import"));
     }
     let manifest = Manifest::new("memory://places", "0", normalized.len() as u64);
-    finish_import(&normalized, &manifest, data_dir)?;
+    finish_import(normalized, &manifest, data_dir)?;
     Ok(manifest)
 }
 
 fn finish_import(
-    places: &[Place],
+    places: Vec<Place>,
     manifest: &Manifest,
     data_dir: &Path,
 ) -> Result<(), CoreError> {
@@ -83,10 +83,10 @@ fn finish_import(
     Ok(())
 }
 
-fn write_indexes(places: &[Place], paths: &DataPaths) -> Result<(), CoreError> {
+fn write_indexes(places: Vec<Place>, paths: &DataPaths) -> Result<(), CoreError> {
     let mut writer = PlaceStoreWriter::new();
     for place in places {
-        writer.push(place.clone());
+        writer.push(place);
     }
     writer.write_to(&paths.places())?;
     text::build_index(writer.places(), &paths.text_dir())?;
