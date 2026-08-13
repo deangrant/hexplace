@@ -66,5 +66,8 @@ fn percentile(sorted_ms: &[f64], p: f64) -> f64 {
         return 0.0;
     }
     let idx = ((sorted_ms.len() as f64 - 1.0) * p).round() as usize;
-    sorted_ms[idx.min(sorted_ms.len() - 1)]
+    sorted_ms
+        .get(idx.min(sorted_ms.len() - 1))
+        .copied()
+        .unwrap_or(0.0)
 }

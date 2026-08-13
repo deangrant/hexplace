@@ -90,6 +90,10 @@ pub async fn serve(engine: Engine, bind: SocketAddr) -> Result<(), CoreError> {
 
 async fn shutdown_signal() {
     let ctrl_c = async {
+        #[expect(
+            clippy::expect_used,
+            reason = "signal install failure is fatal at process bootstrap"
+        )]
         tokio::signal::ctrl_c()
             .await
             .expect("failed to install Ctrl+C handler");
@@ -97,6 +101,10 @@ async fn shutdown_signal() {
 
     #[cfg(unix)]
     let terminate = async {
+        #[expect(
+            clippy::expect_used,
+            reason = "signal install failure is fatal at process bootstrap"
+        )]
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("failed to install signal handler")
             .recv()
@@ -259,11 +267,19 @@ fn parse_binary_points(bytes: &[u8]) -> Result<Vec<[f64; 2]>, CoreError> {
     let mut points = Vec::with_capacity(count);
     for i in 0..count {
         let off = i * 8;
-        let lat = f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as f64;
-        let lon = f32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap()) as f64;
+        let lat = f32_le(bytes, off)? as f64;
+        let lon = f32_le(bytes, off + 4)? as f64;
         points.push([lat, lon]);
     }
     Ok(points)
+}
+
+fn f32_le(buf: &[u8], off: usize) -> Result<f32, CoreError> {
+    let bytes: [u8; 4] = buf
+        .get(off..off + 4)
+        .and_then(|s| s.try_into().ok())
+        .ok_or_else(|| CoreError::invalid("binary bulk body truncated"))?;
+    Ok(f32::from_le_bytes(bytes))
 }
 
 fn run_reverse_bulk(
@@ -289,7 +305,8 @@ fn run_reverse_bulk(
                     let mut local = Vec::with_capacity(chunk.len());
                     for (offset, point) in chunk.iter().enumerate() {
                         let index = start + offset;
-                        let hit = match ReverseQuery::new(point[0], point[1], Some(1)) {
+                        let [lat, lon] = *point;
+                        let hit = match ReverseQuery::new(lat, lon, Some(1)) {
                             Ok(query) => match engine.reverse(&query) {
                                 Ok(results) => {
                                     if let Some(top) = results.first() {
@@ -336,18 +353,22 @@ fn run_reverse_bulk(
             match handle.join() {
                 Ok(local) => {
                     for (idx, hit) in local {
-                        slots[idx] = Some(hit);
+                        if let Some(slot) = slots.get_mut(idx) {
+                            *slot = Some(hit);
+                        }
                     }
                 }
                 Err(_) => {
                     for idx in range {
-                        slots[idx] = Some(ReverseBulkHit {
-                            index: idx,
-                            place_id: None,
-                            score: None,
-                            display_name: None,
-                            error: Some("bulk worker panicked".into()),
-                        });
+                        if let Some(slot) = slots.get_mut(idx) {
+                            *slot = Some(ReverseBulkHit {
+                                index: idx,
+                                place_id: None,
+                                score: None,
+                                display_name: None,
+                                error: Some("bulk worker panicked".into()),
+                            });
+                        }
                     }
                 }
             }

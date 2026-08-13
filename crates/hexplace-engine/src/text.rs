@@ -131,13 +131,9 @@ fn terms_query(text_field: Field, tokens: &[String]) -> Box<dyn tantivy::query::
         .iter()
         .map(|token| Term::from_field_text(text_field, token))
         .collect();
-    if terms.len() == 1 {
-        Box::new(TermQuery::new(
-            terms.into_iter().next().unwrap(),
-            IndexRecordOption::WithFreqs,
-        ))
-    } else {
-        Box::new(BooleanQuery::new_multiterms_query(terms))
+    match <[Term; 1]>::try_from(terms) {
+        Ok([term]) => Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs)),
+        Err(terms) => Box::new(BooleanQuery::new_multiterms_query(terms)),
     }
 }
 

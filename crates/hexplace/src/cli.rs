@@ -118,6 +118,10 @@ pub struct BenchArgs {
 }
 
 /// Runs PBF import.
+#[expect(
+    clippy::print_stdout,
+    reason = "CLI import progress is intentionally written to stdout"
+)]
 pub fn run_import(args: ImportArgs) -> Result<(), CoreError> {
     let manifest = import_pbf(&args.pbf, &args.data_dir)?;
     println!(
@@ -160,6 +164,10 @@ pub fn run_batch(args: BatchArgs) -> Result<(), CoreError> {
 }
 
 /// Times reverse lookups and prints a summary.
+#[expect(
+    clippy::print_stdout,
+    reason = "CLI bench summary is intentionally written to stdout"
+)]
 pub fn run_bench(args: BenchArgs) -> Result<(), CoreError> {
     let engine = Engine::open(EngineConfig::new(&args.data_dir))?;
     let report = bench_reverse(&engine, args.lat, args.lon, args.count)?;

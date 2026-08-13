@@ -196,10 +196,11 @@ fn is_address(tags: &[(String, String)]) -> bool {
 /// Returns a lowercase ISO 3166-1 alpha-2 code when `value` is two ASCII letters.
 fn iso2_code(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
-    if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1].is_ascii_alphabetic() {
-        Some(value.to_ascii_lowercase())
-    } else {
-        None
+    match bytes {
+        [a, b] if a.is_ascii_alphabetic() && b.is_ascii_alphabetic() => {
+            Some(value.to_ascii_lowercase())
+        }
+        _ => None,
     }
 }
 

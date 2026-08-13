@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use hexplace_core::{AddressParts, CoreError, OsmType, Place, PlaceId, PlaceStore};
 use memmap2::Mmap;
 
+use crate::binio::{self, f32_le, i32_le, u32_le, u64_le};
+
 const COORDS_MAGIC: &[u8; 4] = b"GFCO";
 const META_MAGIC: &[u8; 4] = b"GFMT";
 const STRINGS_MAGIC: &[u8; 4] = b"GFST";
@@ -192,11 +194,16 @@ pub struct MmapPlaceStore {
 impl MmapPlaceStore {
     /// Opens a columnar place store directory.
     pub fn open(paths: &PlacePaths) -> Result<Self, CoreError> {
-        let coords = map_file(&paths.coords(), COORDS_MAGIC)?;
-        let meta = map_file(&paths.meta(), META_MAGIC)?;
-        let strings = map_file(&paths.strings(), STRINGS_MAGIC)?;
-        let count = u64::from_le_bytes(coords[8..16].try_into().unwrap());
-        let meta_count = u64::from_le_bytes(meta[8..16].try_into().unwrap());
+        let coords =
+            binio::map_file(&paths.coords(), COORDS_MAGIC, VERSION, |m| CoreError::storage(m))?;
+        let meta =
+            binio::map_file(&paths.meta(), META_MAGIC, VERSION, |m| CoreError::storage(m))?;
+        let strings =
+            binio::map_file(&paths.strings(), STRINGS_MAGIC, VERSION, |m| {
+                CoreError::storage(m)
+            })?;
+        let count = u64_le(&coords, 8)?;
+        let meta_count = u64_le(&meta, 8)?;
         if count != meta_count {
             return Err(CoreError::storage("coords/meta count mismatch"));
         }
@@ -235,59 +242,39 @@ impl MmapPlaceStore {
     }
 }
 
-fn map_file(path: &Path, magic: &[u8; 4]) -> Result<Mmap, CoreError> {
-    let file = File::open(path)
-        .map_err(|e| CoreError::io(format!("failed to open {}: {e}", path.display())))?;
-    // SAFETY: caller must not truncate or overwrite these files in place while
-    // mapped (doing so can SIGBUS). Replace indexes via import publish and
-    // restart the server to load the new data directory.
-    let mmap =
-        unsafe { Mmap::map(&file) }.map_err(|e| CoreError::io(format!("mmap failed: {e}")))?;
-    if mmap.len() < 16 || &mmap[0..4] != magic {
-        return Err(CoreError::storage(format!("{} bad header", path.display())));
-    }
-    let version = u32::from_le_bytes(mmap[4..8].try_into().unwrap());
-    if version != VERSION {
-        return Err(CoreError::storage(format!(
-            "{} unsupported version {version}",
-            path.display()
-        )));
-    }
-    Ok(mmap)
-}
-
 impl PlaceStore for MmapPlaceStore {
     fn get(&self, id: PlaceId) -> Result<Place, CoreError> {
         self.check_id(id)?;
         let (lat, lon) = self.coord(id)?;
         let importance = self.importance(id)?;
         let meta_off = 16 + id as usize * META_STRIDE;
-        let osm_type = match self.meta[meta_off] {
-            0 => OsmType::Node,
-            1 => OsmType::Way,
-            _ => OsmType::Relation,
+        let osm_type = match self.meta.get(meta_off).copied() {
+            Some(0) => OsmType::Node,
+            Some(1) => OsmType::Way,
+            Some(_) => OsmType::Relation,
+            None => return Err(CoreError::storage("meta row truncated")),
         };
-        let osm_id = u64::from_le_bytes(self.meta[meta_off + 5..meta_off + 13].try_into().unwrap());
-        let str_off =
-            u64::from_le_bytes(self.meta[meta_off + 13..meta_off + 21].try_into().unwrap())
-                as usize;
-        let str_len =
-            u32::from_le_bytes(self.meta[meta_off + 21..meta_off + 25].try_into().unwrap())
-                as usize;
-        if str_off + str_len > self.strings.len() {
-            return Err(CoreError::storage("string blob out of range"));
-        }
-        let blob = &self.strings[str_off..str_off + str_len];
+        let osm_id = u64_le(&self.meta, meta_off + 5)?;
+        let str_off = u64_le(&self.meta, meta_off + 13)? as usize;
+        let str_len = u32_le(&self.meta, meta_off + 21)? as usize;
+        let end = str_off
+            .checked_add(str_len)
+            .ok_or_else(|| CoreError::storage("string blob out of range"))?;
+        let blob = self
+            .strings
+            .get(str_off..end)
+            .ok_or_else(|| CoreError::storage("string blob out of range"))?;
         let parts = split_cstrings(blob)?;
-        if parts.len() != 5 {
-            return Err(CoreError::storage("string blob field count mismatch"));
-        }
-        let name = if parts[0].is_empty() {
+        let [name_s, display_name, category, type_name, address_json] =
+            <[&str; 5]>::try_from(parts.as_slice()).map_err(|_| {
+                CoreError::storage("string blob field count mismatch")
+            })?;
+        let name = if name_s.is_empty() {
             None
         } else {
-            Some(parts[0].to_owned())
+            Some(name_s.to_owned())
         };
-        let address: AddressParts = serde_json::from_str(parts[4])
+        let address: AddressParts = serde_json::from_str(address_json)
             .map_err(|e| CoreError::storage(format!("address decode failed: {e}")))?;
         Ok(Place {
             place_id: id,
@@ -296,9 +283,9 @@ impl PlaceStore for MmapPlaceStore {
             lat,
             lon,
             name,
-            display_name: parts[1].to_owned(),
-            category: parts[2].to_owned(),
-            type_name: parts[3].to_owned(),
+            display_name: display_name.to_owned(),
+            category: category.to_owned(),
+            type_name: type_name.to_owned(),
             address,
             importance,
         })
@@ -307,17 +294,15 @@ impl PlaceStore for MmapPlaceStore {
     fn coord(&self, id: PlaceId) -> Result<(f64, f64), CoreError> {
         self.check_id(id)?;
         let off = 16 + id as usize * COORD_STRIDE;
-        let lat = i32::from_le_bytes(self.coords[off..off + 4].try_into().unwrap());
-        let lon = i32::from_le_bytes(self.coords[off + 4..off + 8].try_into().unwrap());
+        let lat = i32_le(&self.coords, off)?;
+        let lon = i32_le(&self.coords, off + 4)?;
         Ok((from_e7(lat), from_e7(lon)))
     }
 
     fn importance(&self, id: PlaceId) -> Result<f32, CoreError> {
         self.check_id(id)?;
         let off = 16 + id as usize * META_STRIDE + 1;
-        Ok(f32::from_le_bytes(
-            self.meta[off..off + 4].try_into().unwrap(),
-        ))
+        f32_le(&self.meta, off)
     }
 }
 
@@ -325,9 +310,12 @@ fn split_cstrings(blob: &[u8]) -> Result<Vec<&str>, CoreError> {
     let mut out = Vec::new();
     let mut start = 0usize;
     for i in 0..blob.len() {
-        if blob[i] == 0 {
-            let s = std::str::from_utf8(&blob[start..i])
-                .map_err(|e| CoreError::storage(format!("utf8 decode failed: {e}")))?;
+        if blob.get(i).copied() == Some(0) {
+            let s = std::str::from_utf8(
+                blob.get(start..i)
+                    .ok_or_else(|| CoreError::storage("string blob slice out of range"))?,
+            )
+            .map_err(|e| CoreError::storage(format!("utf8 decode failed: {e}")))?;
             out.push(s);
             start = i + 1;
         }

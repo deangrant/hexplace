@@ -3,6 +3,7 @@
 // `memmap2` requires `unsafe` at the mapping boundary; all other code stays safe.
 
 pub mod bench;
+mod binio;
 pub mod display;
 pub mod import;
 pub mod manifest;

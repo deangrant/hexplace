@@ -159,7 +159,7 @@ pub fn hash_file(path: &Path) -> Result<String, CoreError> {
         if n == 0 {
             break;
         }
-        hasher.update(&buf[..n]);
+        hasher.update(buf.get(..n).unwrap_or(&[]));
     }
     Ok(format!("{:x}", hasher.finalize()))
 }

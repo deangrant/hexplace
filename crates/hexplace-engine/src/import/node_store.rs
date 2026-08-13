@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use hexplace_core::CoreError;
 use memmap2::{Mmap, MmapMut, MmapOptions};
 
+use crate::binio::i32_le_opt;
+
 /// Stores OSM node coordinates for way-centroid resolution during import.
 pub trait NodeStore {
     /// Inserts or overwrites a node coordinate in 1e-7 degree units.
@@ -51,7 +53,7 @@ impl NodeStore for SparseNodeStore {
         self.entries
             .binary_search_by_key(&id, |e| e.0)
             .ok()
-            .map(|i| (self.entries[i].1, self.entries[i].2))
+            .and_then(|i| self.entries.get(i).map(|e| (e.1, e.2)))
     }
 
     fn finalize(&mut self) -> Result<(), CoreError> {
@@ -140,8 +142,16 @@ impl NodeStore for FlatNodeStore {
             )));
         }
         let off = (id as usize) * 8;
-        self.mmap[off..off + 4].copy_from_slice(&lat_e7.to_le_bytes());
-        self.mmap[off + 4..off + 8].copy_from_slice(&lon_e7.to_le_bytes());
+        let lat_slot = self
+            .mmap
+            .get_mut(off..off + 4)
+            .ok_or_else(|| CoreError::import("flat node slot out of range"))?;
+        lat_slot.copy_from_slice(&lat_e7.to_le_bytes());
+        let lon_slot = self
+            .mmap
+            .get_mut(off + 4..off + 8)
+            .ok_or_else(|| CoreError::import("flat node slot out of range"))?;
+        lon_slot.copy_from_slice(&lon_e7.to_le_bytes());
         Ok(())
     }
 
@@ -154,8 +164,8 @@ impl NodeStore for FlatNodeStore {
             return None;
         }
         let off = (id as usize) * 8;
-        let lat = i32::from_le_bytes(self.mmap[off..off + 4].try_into().ok()?);
-        let lon = i32::from_le_bytes(self.mmap[off + 4..off + 8].try_into().ok()?);
+        let lat = i32_le_opt(&self.mmap, off)?;
+        let lon = i32_le_opt(&self.mmap, off + 4)?;
         // Unwritten slots are zero; treat (0,0) as missing only when never set
         // is ambiguous — for tests we accept zeros as valid Gulf of Guinea.
         Some((lat, lon))
@@ -170,7 +180,8 @@ impl NodeStore for FlatNodeStore {
 }
 
 /// Read helper used by unit tests against a finalized flat file.
-pub fn flat_get(path: &Path, id: i64) -> Result<Option<(i32, i32)>, CoreError> {
+#[cfg(test)]
+fn flat_get(path: &Path, id: i64) -> Result<Option<(i32, i32)>, CoreError> {
     let (_p, mmap, max_id) = FlatNodeStore::open_readonly(path)?;
     if id < 0 {
         return Ok(None);
@@ -180,8 +191,10 @@ pub fn flat_get(path: &Path, id: i64) -> Result<Option<(i32, i32)>, CoreError> {
         return Ok(None);
     }
     let off = (id as usize) * 8;
-    let lat = i32::from_le_bytes(mmap[off..off + 4].try_into().unwrap());
-    let lon = i32::from_le_bytes(mmap[off + 4..off + 8].try_into().unwrap());
+    let lat = i32_le_opt(&mmap, off)
+        .ok_or_else(|| CoreError::storage("truncated i32 read"))?;
+    let lon = i32_le_opt(&mmap, off + 4)
+        .ok_or_else(|| CoreError::storage("truncated i32 read"))?;
     Ok(Some((lat, lon)))
 }
 

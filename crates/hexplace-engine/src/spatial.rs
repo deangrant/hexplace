@@ -9,13 +9,12 @@ use hexplace_core::{CoreError, Place, PlaceId, ReverseQuery, SpatialSearcher};
 use h3o::{LatLng, Resolution};
 use memmap2::Mmap;
 
+use crate::binio::{self, u32_le_opt, u64_le, u64_le_opt};
+
 /// Fine H3 resolution for reverse candidate lookup (~76 m edge).
 pub const H3_RESOLUTION_FINE: u8 = 10;
 /// Coarse H3 resolution for empty-cell fallback (~36 km²).
 pub const H3_RESOLUTION_COARSE: u8 = 6;
-
-/// Default fine resolution (alias for callers expecting a single default).
-pub const DEFAULT_H3_RESOLUTION: u8 = H3_RESOLUTION_FINE;
 
 const CELLS_MAGIC: &[u8; 4] = b"GFCL";
 const OFFSETS_MAGIC: &[u8; 4] = b"GFOF";
@@ -184,12 +183,17 @@ struct CsrLayer {
 
 impl CsrLayer {
     fn open(paths: &CsrPaths) -> Result<Self, CoreError> {
-        let cells = map_column(&paths.cells(), CELLS_MAGIC)?;
-        let offsets = map_column(&paths.offsets(), OFFSETS_MAGIC)?;
-        let postings = map_column(&paths.postings(), POSTINGS_MAGIC)?;
-        let cell_count = header_count(&cells);
-        let offset_count = header_count(&offsets);
-        let posting_count = header_count(&postings);
+        let cells =
+            binio::map_file(&paths.cells(), CELLS_MAGIC, VERSION, |m| CoreError::index(m))?;
+        let offsets =
+            binio::map_file(&paths.offsets(), OFFSETS_MAGIC, VERSION, |m| CoreError::index(m))?;
+        let postings =
+            binio::map_file(&paths.postings(), POSTINGS_MAGIC, VERSION, |m| {
+                CoreError::index(m)
+            })?;
+        let cell_count = header_count(&cells)?;
+        let offset_count = header_count(&offsets)?;
+        let posting_count = header_count(&postings)?;
         let expected_offsets = cell_count
             .checked_add(1)
             .ok_or_else(|| CoreError::index("CSR cell count overflow"))?;
@@ -214,14 +218,14 @@ impl CsrLayer {
         })
     }
 
-    fn cell_at(&self, index: usize) -> u64 {
+    fn cell_at(&self, index: usize) -> Option<u64> {
         let start = 16 + index * 8;
-        u64::from_le_bytes(self.cells[start..start + 8].try_into().unwrap())
+        u64_le_opt(&self.cells, start)
     }
 
-    fn offset_at(&self, index: usize) -> u64 {
+    fn offset_at(&self, index: usize) -> Option<u64> {
         let start = 16 + index * 8;
-        u64::from_le_bytes(self.offsets[start..start + 8].try_into().unwrap())
+        u64_le_opt(&self.offsets, start)
     }
 
     fn lookup_cell_ids(&self, cell: u64) -> Vec<PlaceId> {
@@ -229,30 +233,41 @@ impl CsrLayer {
         let mut hi = self.cell_count as usize;
         while lo < hi {
             let mid = (lo + hi) / 2;
-            let c = self.cell_at(mid);
+            let Some(c) = self.cell_at(mid) else {
+                return Vec::new();
+            };
             if c < cell {
                 lo = mid + 1;
             } else {
                 hi = mid;
             }
         }
-        if lo >= self.cell_count as usize || self.cell_at(lo) != cell {
+        let Some(found) = self.cell_at(lo) else {
+            return Vec::new();
+        };
+        if lo >= self.cell_count as usize || found != cell {
             return Vec::new();
         }
-        let start = self.offset_at(lo) as usize;
-        let end = self.offset_at(lo + 1) as usize;
+        let Some(start) = self.offset_at(lo).map(|v| v as usize) else {
+            return Vec::new();
+        };
+        let Some(end) = self.offset_at(lo + 1).map(|v| v as usize) else {
+            return Vec::new();
+        };
         let mut ids = Vec::with_capacity(end.saturating_sub(start));
         for i in start..end {
             let off = 16 + i * 4;
-            let id = u32::from_le_bytes(self.postings[off..off + 4].try_into().unwrap());
+            let Some(id) = u32_le_opt(&self.postings, off) else {
+                return Vec::new();
+            };
             ids.push(u64::from(id));
         }
         ids
     }
 }
 
-fn header_count(mmap: &Mmap) -> u64 {
-    u64::from_le_bytes(mmap[8..16].try_into().unwrap())
+fn header_count(mmap: &Mmap) -> Result<u64, CoreError> {
+    u64_le(mmap, 8).map_err(|_| CoreError::index("CSR header truncated"))
 }
 
 fn column_byte_len(count: u64, stride: usize) -> Result<usize, CoreError> {
@@ -265,9 +280,9 @@ fn column_byte_len(count: u64, stride: usize) -> Result<usize, CoreError> {
         .ok_or_else(|| CoreError::index("CSR column size overflow"))
 }
 
-fn u64_at(mmap: &Mmap, index: u64) -> u64 {
+fn u64_at(mmap: &Mmap, index: u64) -> Result<u64, CoreError> {
     let start = 16 + index as usize * 8;
-    u64::from_le_bytes(mmap[start..start + 8].try_into().unwrap())
+    u64_le(mmap, start).map_err(|_| CoreError::index("CSR offsets truncated"))
 }
 
 fn validate_offset_table(
@@ -275,44 +290,23 @@ fn validate_offset_table(
     offset_count: u64,
     posting_count: u64,
 ) -> Result<(), CoreError> {
-    let first = u64_at(offsets, 0);
+    let first = u64_at(offsets, 0)?;
     if first != 0 {
         return Err(CoreError::index("CSR offsets must start at 0"));
     }
-    let last = u64_at(offsets, offset_count - 1);
+    let last = u64_at(offsets, offset_count - 1)?;
     if last != posting_count {
         return Err(CoreError::index("CSR offsets last entry mismatch"));
     }
     let mut prev = first;
     for i in 1..offset_count {
-        let cur = u64_at(offsets, i);
+        let cur = u64_at(offsets, i)?;
         if cur < prev || cur > posting_count {
             return Err(CoreError::index("CSR offsets not monotone"));
         }
         prev = cur;
     }
     Ok(())
-}
-
-fn map_column(path: &Path, magic: &[u8; 4]) -> Result<Mmap, CoreError> {
-    let file = File::open(path)
-        .map_err(|e| CoreError::io(format!("failed to open {}: {e}", path.display())))?;
-    // SAFETY: caller must not truncate or overwrite these files in place while
-    // mapped (doing so can SIGBUS). Replace indexes via a new data directory
-    // and restart the server.
-    let mmap = unsafe { Mmap::map(&file) }
-        .map_err(|e| CoreError::io(format!("mmap spatial failed: {e}")))?;
-    if mmap.len() < 16 || &mmap[0..4] != magic {
-        return Err(CoreError::index(format!("{} bad header", path.display())));
-    }
-    let version = u32::from_le_bytes(mmap[4..8].try_into().unwrap());
-    if version != VERSION {
-        return Err(CoreError::index(format!(
-            "{} unsupported version {version}",
-            path.display()
-        )));
-    }
-    Ok(mmap)
 }
 
 /// Two-level H3 reverse index.

@@ -29,7 +29,13 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             tracing::error!("{err}");
-            eprintln!("error: {err}");
+            #[expect(
+                clippy::print_stderr,
+                reason = "CLI fatal errors are intentionally written to stderr"
+            )]
+            {
+                eprintln!("error: {err}");
+            }
             ExitCode::FAILURE
         }
     }

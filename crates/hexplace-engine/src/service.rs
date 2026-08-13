@@ -221,14 +221,18 @@ impl Geocoder for Engine {
                 match handle.join() {
                     Ok(local) => {
                         for (idx, result) in local {
-                            slots[idx] = Some(result);
+                            if let Some(slot) = slots.get_mut(idx) {
+                                *slot = Some(result);
+                            }
                         }
                     }
                     Err(_) => {
                         for (idx, result) in
                             batch_worker_error(&request.items, range, "batch worker panicked")
                         {
-                            slots[idx] = Some(result);
+                            if let Some(slot) = slots.get_mut(idx) {
+                                *slot = Some(result);
+                            }
                         }
                     }
                 }
@@ -239,8 +243,13 @@ impl Geocoder for Engine {
             .into_iter()
             .enumerate()
             .map(|(idx, slot)| {
-                slot.unwrap_or_else(|| {
-                    batch_item_error(&request.items[idx], "batch worker panicked")
+                slot.unwrap_or_else(|| match request.items.get(idx) {
+                    Some(item) => batch_item_error(item, "batch worker panicked"),
+                    None => BatchResult {
+                        id: None,
+                        results: Vec::new(),
+                        error: Some("batch worker panicked".into()),
+                    },
                 })
             })
             .collect();
@@ -269,7 +278,11 @@ fn batch_worker_error(
     message: &str,
 ) -> Vec<(usize, BatchResult)> {
     range
-        .map(|idx| (idx, batch_item_error(&items[idx], message)))
+        .filter_map(|idx| {
+            items
+                .get(idx)
+                .map(|item| (idx, batch_item_error(item, message)))
+        })
         .collect()
 }
 
