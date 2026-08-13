@@ -146,7 +146,7 @@ impl TextSearcher for TantivySearcher {
         let tq = terms_query(self.text_field, &tokens);
         let searcher = self.reader.searcher();
         let top = searcher
-            .search(&tq, &TopDocs::with_limit(query.limit))
+            .search(&tq, &TopDocs::with_limit(query.limit).order_by_score())
             .map_err(|e| CoreError::index(format!("search failed: {e}")))?;
 
         let mut out = Vec::with_capacity(top.len());
