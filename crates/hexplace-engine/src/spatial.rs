@@ -158,6 +158,10 @@ fn write_u32_file(path: &Path, magic: &[u8; 4], values: &[u32]) -> Result<(), Co
 }
 
 /// One mmap'd CSR layer.
+///
+/// After [`CsrLayer::open`] succeeds, `cell_at` / `offset_at` / posting reads
+/// assume the mapped columns cover the claimed arrays and that offsets are
+/// monotone and within the postings length.
 struct CsrLayer {
     cells: Mmap,
     offsets: Mmap,
@@ -170,11 +174,25 @@ impl CsrLayer {
         let cells = map_column(&paths.cells(), CELLS_MAGIC)?;
         let offsets = map_column(&paths.offsets(), OFFSETS_MAGIC)?;
         let postings = map_column(&paths.postings(), POSTINGS_MAGIC)?;
-        let cell_count = u64::from_le_bytes(cells[8..16].try_into().unwrap());
-        let offset_count = u64::from_le_bytes(offsets[8..16].try_into().unwrap());
-        if offset_count != cell_count + 1 {
+        let cell_count = header_count(&cells);
+        let offset_count = header_count(&offsets);
+        let posting_count = header_count(&postings);
+        let expected_offsets = cell_count
+            .checked_add(1)
+            .ok_or_else(|| CoreError::index("CSR cell count overflow"))?;
+        if offset_count != expected_offsets {
             return Err(CoreError::index("CSR offset count mismatch"));
         }
+        let cells_need = column_byte_len(cell_count, 8)?;
+        let offsets_need = column_byte_len(offset_count, 8)?;
+        let postings_need = column_byte_len(posting_count, 4)?;
+        if cells.len() < cells_need
+            || offsets.len() < offsets_need
+            || postings.len() < postings_need
+        {
+            return Err(CoreError::index("CSR columns truncated"));
+        }
+        validate_offset_table(&offsets, offset_count, posting_count)?;
         Ok(Self {
             cells,
             offsets,
@@ -220,10 +238,55 @@ impl CsrLayer {
     }
 }
 
+fn header_count(mmap: &Mmap) -> u64 {
+    u64::from_le_bytes(mmap[8..16].try_into().unwrap())
+}
+
+fn column_byte_len(count: u64, stride: usize) -> Result<usize, CoreError> {
+    let count = usize::try_from(count)
+        .map_err(|_| CoreError::index("CSR column count too large"))?;
+    let body = count
+        .checked_mul(stride)
+        .ok_or_else(|| CoreError::index("CSR column size overflow"))?;
+    body.checked_add(16)
+        .ok_or_else(|| CoreError::index("CSR column size overflow"))
+}
+
+fn u64_at(mmap: &Mmap, index: u64) -> u64 {
+    let start = 16 + index as usize * 8;
+    u64::from_le_bytes(mmap[start..start + 8].try_into().unwrap())
+}
+
+fn validate_offset_table(
+    offsets: &Mmap,
+    offset_count: u64,
+    posting_count: u64,
+) -> Result<(), CoreError> {
+    let first = u64_at(offsets, 0);
+    if first != 0 {
+        return Err(CoreError::index("CSR offsets must start at 0"));
+    }
+    let last = u64_at(offsets, offset_count - 1);
+    if last != posting_count {
+        return Err(CoreError::index("CSR offsets last entry mismatch"));
+    }
+    let mut prev = first;
+    for i in 1..offset_count {
+        let cur = u64_at(offsets, i);
+        if cur < prev || cur > posting_count {
+            return Err(CoreError::index("CSR offsets not monotone"));
+        }
+        prev = cur;
+    }
+    Ok(())
+}
+
 fn map_column(path: &Path, magic: &[u8; 4]) -> Result<Mmap, CoreError> {
     let file = File::open(path)
         .map_err(|e| CoreError::io(format!("failed to open {}: {e}", path.display())))?;
-    // SAFETY: spatial files are immutable while serving.
+    // SAFETY: caller must not truncate or overwrite these files in place while
+    // mapped (doing so can SIGBUS). Replace indexes via a new data directory
+    // and restart the server.
     let mmap = unsafe { Mmap::map(&file) }
         .map_err(|e| CoreError::io(format!("mmap spatial failed: {e}")))?;
     if mmap.len() < 16 || &mmap[0..4] != magic {
@@ -372,5 +435,52 @@ mod tests {
         let ids = index.candidates(&q).unwrap();
         // May find via ring expand or coarse; either way should not panic.
         let _ = ids;
+    }
+
+    fn build_sample_index() -> (tempfile::TempDir, SpatialPaths) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = SpatialPaths::new(dir.path().join("spatial"));
+        let places = vec![place(0, 48.8566, 2.3522, 0.9)];
+        build_index(&places, &paths).unwrap();
+        (dir, paths)
+    }
+
+    fn truncate_path(path: &Path, len: u64) {
+        let file = File::options().write(true).open(path).unwrap();
+        file.set_len(len).unwrap();
+    }
+
+    #[test]
+    fn open_rejects_truncated_cells() {
+        let (_dir, paths) = build_sample_index();
+        let cells = paths.fine().cells();
+        let len = std::fs::metadata(&cells).unwrap().len();
+        truncate_path(&cells, len - 1);
+        assert!(H3SpatialIndex::open(&paths).is_err());
+    }
+
+    #[test]
+    fn open_rejects_truncated_postings() {
+        let (_dir, paths) = build_sample_index();
+        let postings = paths.fine().postings();
+        let len = std::fs::metadata(&postings).unwrap().len();
+        truncate_path(&postings, len - 1);
+        assert!(H3SpatialIndex::open(&paths).is_err());
+    }
+
+    #[test]
+    fn open_rejects_non_monotone_offsets() {
+        let (_dir, paths) = build_sample_index();
+        write_u64_file(&paths.fine().cells(), CELLS_MAGIC, &[1, 2, 3]).unwrap();
+        write_u64_file(&paths.fine().offsets(), OFFSETS_MAGIC, &[0, 2, 1, 2]).unwrap();
+        write_u32_file(&paths.fine().postings(), POSTINGS_MAGIC, &[10, 20]).unwrap();
+        assert!(H3SpatialIndex::open(&paths).is_err());
+    }
+
+    #[test]
+    fn open_rejects_offsets_past_postings() {
+        let (_dir, paths) = build_sample_index();
+        write_u64_file(&paths.fine().offsets(), OFFSETS_MAGIC, &[0, 99]).unwrap();
+        assert!(H3SpatialIndex::open(&paths).is_err());
     }
 }
