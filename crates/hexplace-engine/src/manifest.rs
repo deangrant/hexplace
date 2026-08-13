@@ -161,7 +161,11 @@ pub fn hash_file(path: &Path) -> Result<String, CoreError> {
         }
         hasher.update(buf.get(..n).unwrap_or(&[]));
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 #[cfg(test)]
