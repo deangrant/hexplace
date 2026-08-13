@@ -1,6 +1,6 @@
 # Architecture
 
-Geofind splits responsibilities across three crates and columnar on-disk indexes.
+Hexplace splits responsibilities across three crates and columnar on-disk indexes.
 
 ```text
 OSM PBF ──► import ──► places/{coords,meta,strings}.bin
@@ -17,7 +17,7 @@ CLI / HTTP ──► GeocodeService ──► traits
 
 - **SRP:** import, storage, text search, spatial search, and HTTP each live in
   focused modules.
-- **DIP / ISP:** `geofind-core` owns narrow traits (`PlaceStore`,
+- **DIP / ISP:** `hexplace-core` owns narrow traits (`PlaceStore`,
   `TextSearcher`, `SpatialSearcher`, `Geocoder`). The engine implements them;
   the binary wires them at startup.
 - **OCP:** new index backends can implement the same traits without rewriting

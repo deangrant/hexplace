@@ -2,7 +2,7 @@
 
 ## Toolchain
 
-Geofind pins a Rust toolchain in `rust-toolchain.toml`. Install rustup, then
+Hexplace pins a Rust toolchain in `rust-toolchain.toml`. Install rustup, then
 from the repository root:
 
 ```bash
@@ -21,7 +21,7 @@ cargo test
 ## Data directory
 
 Default data directory is `./data`. Override with `--data-dir` or the
-`GEOFIND_DATA` environment variable.
+`HEXPLACE_DATA` environment variable.
 
 After import the layout is:
 
@@ -38,15 +38,15 @@ data/
     coarse/         # CSR H3 res 6 fallback
 ```
 
-`geofind serve` refuses to start if `manifest.json` is missing or the schema
+`hexplace serve` refuses to start if `manifest.json` is missing or the schema
 version / format markers are unsupported.
 
 ## Environment variables
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `GEOFIND_DATA` | `./data` | Data directory |
-| `GEOFIND_BIND` | `127.0.0.1:8080` | HTTP listen address |
+| `HEXPLACE_DATA` | `./data` | Data directory |
+| `HEXPLACE_BIND` | `127.0.0.1:8080` | HTTP listen address |
 | `RUST_LOG` | `info` | Tracing filter |
 
 ## Importing extracts
@@ -54,7 +54,7 @@ version / format markers are unsupported.
 Use regional extracts while developing.
 
 ```bash
-geofind import --pbf path/to/region.osm.pbf --data-dir ./data
+hexplace import --pbf path/to/region.osm.pbf --data-dir ./data
 ```
 
 Rough guidance:
@@ -70,9 +70,9 @@ stored nodes, not the global OSM id range).
 ## Running as a service
 
 ```bash
-export GEOFIND_DATA=/var/lib/geofind
-export GEOFIND_BIND=0.0.0.0:8080
-geofind serve
+export HEXPLACE_DATA=/var/lib/hexplace
+export HEXPLACE_BIND=0.0.0.0:8080
+hexplace serve
 ```
 
 Put a reverse proxy in front for TLS. Use `/v1/health` for liveness and
@@ -88,7 +88,7 @@ JSONL input, one object per line:
 ```
 
 ```bash
-geofind batch --data-dir ./data --file queries.jsonl
+hexplace batch --data-dir ./data --file queries.jsonl
 ```
 
 ## Bulk reverse HTTP
@@ -103,5 +103,5 @@ curl -s -H 'content-type: application/json' \
 ## Reverse bench
 
 ```bash
-geofind bench --data-dir ./data --lat 43.7384 --lon 7.4246 --count 10000
+hexplace bench --data-dir ./data --lat 43.7384 --lon 7.4246 --count 10000
 ```

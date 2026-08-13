@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/geofind-core",
-    "crates/geofind-engine",
-    "crates/geofind",
+    "crates/hexplace-core",
+    "crates/hexplace-engine",
+    "crates/hexplace",
 ]
 
 [workspace.package]
@@ -13,8 +13,8 @@ license = "MIT OR Apache-2.0"
 rust-version = "1.75"
 
 [workspace.dependencies]
-geofind-core = { path = "crates/geofind-core" }
-geofind-engine = { path = "crates/geofind-engine" }
+hexplace-core = { path = "crates/hexplace-core" }
+hexplace-engine = { path = "crates/hexplace-engine" }
 axum = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
 h3o = "0.8"
