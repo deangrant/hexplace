@@ -18,10 +18,12 @@ CLI / HTTP ──► GeocodeService ──► traits
 - **SRP:** import, storage, text search, spatial search, and HTTP each live in
   focused modules.
 - **DIP / ISP:** `hexplace-core` owns narrow traits (`PlaceStore`,
-  `TextSearcher`, `SpatialSearcher`, `Geocoder`). The engine implements them;
-  the binary wires them at startup.
+  `TextSearcher`, `SpatialSearcher`, `Geocoder`). HTTP depends on `Geocoder`;
+  `Engine` implements it. `Engine` is the single-node composition root: it opens
+  concrete mmap / Tantivy / H3 indexes and uses static dispatch inside the
+  engine.
 - **OCP:** new index backends can implement the same traits without rewriting
-  HTTP handlers. A `ShardRouter` seam allows multi-shard serving later.
+  HTTP handlers once wired at the composition root.
 
 Prefer static dispatch inside the engine. The HTTP layer holds an `Arc<Engine>`
 as shared state.
@@ -73,7 +75,8 @@ Extracts use the sparse node store. For planet scale:
 
 - Switch import to `FlatNodeStore` (`8 bytes × max_node_id`, ~100 GB).
 - Partition place / Tantivy / CSR files by coarse H3 cell or country.
-- Route queries via `ShardRouter` (scaffold already present).
+- Introduce multi-shard query routing only after partitioned indexes exist;
+  nothing in this release implements or scaffolds that path.
 
 Those changes should not require redesigning the HTTP API.
 

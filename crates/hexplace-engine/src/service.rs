@@ -12,7 +12,6 @@ use hexplace_core::{
 use crate::import::acquire_shared_lock;
 use crate::manifest::{DataPaths, Manifest};
 use crate::ranking::{forward_score, haversine_m, reverse_score};
-use crate::shard::{ShardRouter, SingleShard};
 use crate::spatial::H3SpatialIndex;
 use crate::store::MmapPlaceStore;
 use crate::text::TantivySearcher;
@@ -40,8 +39,6 @@ pub struct Engine {
     store: Arc<MmapPlaceStore>,
     text: Arc<TantivySearcher>,
     spatial: Arc<H3SpatialIndex>,
-    #[allow(dead_code)]
-    shard_router: Arc<dyn ShardRouter>,
     /// Shared flock keeping import from publishing over a live serve.
     #[allow(dead_code)]
     _data_lock: File,
@@ -65,7 +62,6 @@ impl Engine {
             store,
             text,
             spatial,
-            shard_router: Arc::new(SingleShard),
             _data_lock: data_lock,
         })
     }
