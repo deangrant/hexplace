@@ -94,16 +94,29 @@ fn build_csr_layer(places: &[Place], paths: &CsrPaths, resolution: u8) -> Result
     let res = Resolution::try_from(resolution)
         .map_err(|e| CoreError::index(format!("invalid H3 resolution: {e}")))?;
 
+    // Postings are intentionally 32-bit until a future spatial format bump.
+    if places.len() > u32::MAX as usize {
+        return Err(CoreError::index(
+            "place count exceeds u32; spatial postings are 32-bit",
+        ));
+    }
+
     // cell -> (place_id, importance) list.
     let mut buckets: HashMap<u64, Vec<(u32, f32)>> = HashMap::new();
     for place in places {
         let ll = LatLng::new(place.lat, place.lon)
             .map_err(|e| CoreError::index(format!("invalid coordinates: {e}")))?;
         let cell = u64::from(ll.to_cell(res));
+        let place_id = u32::try_from(place.place_id).map_err(|_| {
+            CoreError::index(format!(
+                "place_id {} exceeds u32; spatial postings are 32-bit",
+                place.place_id
+            ))
+        })?;
         buckets
             .entry(cell)
             .or_default()
-            .push((place.place_id as u32, place.importance));
+            .push((place_id, place.importance));
     }
 
     let mut cells: Vec<u64> = buckets.keys().copied().collect();
@@ -482,5 +495,18 @@ mod tests {
         let (_dir, paths) = build_sample_index();
         write_u64_file(&paths.fine().offsets(), OFFSETS_MAGIC, &[0, 99]).unwrap();
         assert!(H3SpatialIndex::open(&paths).is_err());
+    }
+
+    #[test]
+    fn build_rejects_place_id_above_u32_max() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = SpatialPaths::new(dir.path().join("spatial"));
+        let places = vec![place(u64::from(u32::MAX) + 1, 48.8566, 2.3522, 0.9)];
+        let err = build_index(&places, &paths).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("exceeds u32") || msg.contains("32-bit"),
+            "unexpected error: {msg}"
+        );
     }
 }
