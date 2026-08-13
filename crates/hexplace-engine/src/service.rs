@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use hexplace_core::{
     BatchItem, BatchRequest, BatchResponse, BatchResult, CoreError, Geocoder, PlaceHit, PlaceId,
-    PlaceStore, ReverseQuery, SearchQuery, SpatialSearcher, TextSearcher,
+    PlaceStore, ReverseBulkHit, ReverseQuery, SearchQuery, SpatialSearcher, TextSearcher,
 };
 
 use crate::import::acquire_shared_lock;
@@ -83,51 +83,82 @@ impl Engine {
         &self.paths.root
     }
 
+    /// Reverse-geocodes many `[lat, lon]` points in parallel.
+    pub fn reverse_bulk(&self, points: &[[f64; 2]]) -> Result<Vec<ReverseBulkHit>, CoreError> {
+        if points.is_empty() {
+            return Err(CoreError::invalid("points must not be empty"));
+        }
+        if points.len() > Self::MAX_BATCH_ITEMS {
+            return Err(CoreError::invalid(format!(
+                "bulk limited to {} points",
+                Self::MAX_BATCH_ITEMS
+            )));
+        }
+
+        let workers = worker_count(points.len());
+        let chunk_size = (points.len() + workers - 1) / workers;
+        let mut slots: Vec<Option<ReverseBulkHit>> = (0..points.len()).map(|_| None).collect();
+
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(workers);
+            for (chunk_idx, chunk) in points.chunks(chunk_size).enumerate() {
+                let start = chunk_idx * chunk_size;
+                let end = start + chunk.len();
+                handles.push((
+                    start..end,
+                    scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .enumerate()
+                            .map(|(offset, point)| {
+                                let index = start + offset;
+                                let [lat, lon] = *point;
+                                (index, reverse_one_bulk_hit(self, index, lat, lon))
+                            })
+                            .collect::<Vec<_>>()
+                    }),
+                ));
+            }
+            fill_slots_from_joins(&mut slots, handles, |idx| ReverseBulkHit {
+                index: idx,
+                place_id: None,
+                score: None,
+                display_name: None,
+                error: Some("bulk worker panicked".into()),
+            });
+        });
+
+        Ok(slots
+            .into_iter()
+            .enumerate()
+            .map(|(idx, slot)| {
+                slot.unwrap_or_else(|| ReverseBulkHit {
+                    index: idx,
+                    place_id: None,
+                    score: None,
+                    display_name: None,
+                    error: Some("bulk worker panicked".into()),
+                })
+            })
+            .collect())
+    }
+
     fn process_item(&self, item: &BatchItem) -> BatchResult {
         match item {
-            BatchItem::Geocode { id, q, limit } => match SearchQuery::new(q, *limit) {
-                Ok(query) => match self.geocode(&query) {
-                    Ok(results) => BatchResult {
-                        id: id.clone(),
-                        results,
-                        error: None,
-                    },
-                    Err(e) => BatchResult {
-                        id: id.clone(),
-                        results: Vec::new(),
-                        error: Some(e.to_string()),
-                    },
-                },
-                Err(e) => BatchResult {
-                    id: id.clone(),
-                    results: Vec::new(),
-                    error: Some(e.to_string()),
-                },
-            },
+            BatchItem::Geocode { id, q, limit } => {
+                let result = SearchQuery::new(q, *limit).and_then(|query| self.geocode(&query));
+                batch_result_from(id.clone(), result)
+            }
             BatchItem::Reverse {
                 id,
                 lat,
                 lon,
                 limit,
-            } => match ReverseQuery::new(*lat, *lon, *limit) {
-                Ok(query) => match self.reverse(&query) {
-                    Ok(results) => BatchResult {
-                        id: id.clone(),
-                        results,
-                        error: None,
-                    },
-                    Err(e) => BatchResult {
-                        id: id.clone(),
-                        results: Vec::new(),
-                        error: Some(e.to_string()),
-                    },
-                },
-                Err(e) => BatchResult {
-                    id: id.clone(),
-                    results: Vec::new(),
-                    error: Some(e.to_string()),
-                },
-            },
+            } => {
+                let result =
+                    ReverseQuery::new(*lat, *lon, *limit).and_then(|query| self.reverse(&query));
+                batch_result_from(id.clone(), result)
+            }
         }
     }
 }
@@ -193,11 +224,7 @@ impl Geocoder for Engine {
             )));
         }
 
-        let workers = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .min(request.items.len())
-            .max(1);
+        let workers = worker_count(request.items.len());
         let chunk_size = (request.items.len() + workers - 1) / workers;
         let mut slots: Vec<Option<BatchResult>> = (0..request.items.len()).map(|_| None).collect();
 
@@ -209,34 +236,24 @@ impl Geocoder for Engine {
                 handles.push((
                     start..end,
                     scope.spawn(move || {
-                        let mut local = Vec::with_capacity(chunk.len());
-                        for (offset, item) in chunk.iter().enumerate() {
-                            local.push((start + offset, self.process_item(item)));
-                        }
-                        local
+                        chunk
+                            .iter()
+                            .enumerate()
+                            .map(|(offset, item)| (start + offset, self.process_item(item)))
+                            .collect::<Vec<_>>()
                     }),
                 ));
             }
-            for (range, handle) in handles {
-                match handle.join() {
-                    Ok(local) => {
-                        for (idx, result) in local {
-                            if let Some(slot) = slots.get_mut(idx) {
-                                *slot = Some(result);
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        for (idx, result) in
-                            batch_worker_error(&request.items, range, "batch worker panicked")
-                        {
-                            if let Some(slot) = slots.get_mut(idx) {
-                                *slot = Some(result);
-                            }
-                        }
-                    }
+            fill_slots_from_joins(&mut slots, handles, |idx| {
+                match request.items.get(idx) {
+                    Some(item) => batch_item_error(item, "batch worker panicked"),
+                    None => BatchResult {
+                        id: None,
+                        results: Vec::new(),
+                        error: Some("batch worker panicked".into()),
+                    },
                 }
-            }
+            });
         });
 
         let items = slots
@@ -257,6 +274,87 @@ impl Geocoder for Engine {
     }
 }
 
+fn worker_count(len: usize) -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(len)
+        .max(1)
+}
+
+fn fill_slots_from_joins<T, F>(
+    slots: &mut [Option<T>],
+    handles: Vec<(std::ops::Range<usize>, std::thread::ScopedJoinHandle<'_, Vec<(usize, T)>>)>,
+    panic_value: F,
+) where
+    F: Fn(usize) -> T,
+{
+    for (range, handle) in handles {
+        match handle.join() {
+            Ok(local) => {
+                for (idx, value) in local {
+                    if let Some(slot) = slots.get_mut(idx) {
+                        *slot = Some(value);
+                    }
+                }
+            }
+            Err(_) => {
+                for idx in range {
+                    if let Some(slot) = slots.get_mut(idx) {
+                        *slot = Some(panic_value(idx));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn reverse_one_bulk_hit(engine: &Engine, index: usize, lat: f64, lon: f64) -> ReverseBulkHit {
+    let query = match ReverseQuery::new(lat, lon, Some(1)) {
+        Ok(query) => query,
+        Err(e) => return bulk_hit_error(index, e.to_string()),
+    };
+    let results = match engine.reverse(&query) {
+        Ok(results) => results,
+        Err(e) => return bulk_hit_error(index, e.to_string()),
+    };
+    let Some(top) = results.first() else {
+        return bulk_hit_error(index, "no results".into());
+    };
+    ReverseBulkHit {
+        index,
+        place_id: Some(top.place_id),
+        score: Some(top.score),
+        display_name: Some(top.display_name.clone()),
+        error: None,
+    }
+}
+
+fn bulk_hit_error(index: usize, message: String) -> ReverseBulkHit {
+    ReverseBulkHit {
+        index,
+        place_id: None,
+        score: None,
+        display_name: None,
+        error: Some(message),
+    }
+}
+
+fn batch_result_from(id: Option<String>, result: Result<Vec<PlaceHit>, CoreError>) -> BatchResult {
+    match result {
+        Ok(results) => BatchResult {
+            id,
+            results,
+            error: None,
+        },
+        Err(e) => BatchResult {
+            id,
+            results: Vec::new(),
+            error: Some(e.to_string()),
+        },
+    }
+}
+
 fn batch_item_id(item: &BatchItem) -> Option<String> {
     match item {
         BatchItem::Geocode { id, .. } | BatchItem::Reverse { id, .. } => id.clone(),
@@ -272,6 +370,7 @@ fn batch_item_error(item: &BatchItem, message: &str) -> BatchResult {
 }
 
 /// Builds error results for a panicked worker's index range.
+#[cfg(test)]
 fn batch_worker_error(
     items: &[BatchItem],
     range: std::ops::Range<usize>,

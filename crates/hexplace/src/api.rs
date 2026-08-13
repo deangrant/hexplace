@@ -223,21 +223,11 @@ async fn reverse_bulk(
     } else {
         let req: ReverseBulkRequest = serde_json::from_slice(&bytes)
             .map_err(|e| CoreError::invalid(format!("invalid bulk JSON: {e}")))?;
-        if req.points.is_empty() {
-            return Err(CoreError::invalid("points must not be empty").into());
-        }
-        if req.points.len() > Engine::MAX_BATCH_ITEMS {
-            return Err(CoreError::invalid(format!(
-                "bulk limited to {} points",
-                Engine::MAX_BATCH_ITEMS
-            ))
-            .into());
-        }
         req.points
     };
 
     let engine = Arc::clone(&state.engine);
-    let hits = tokio::task::spawn_blocking(move || run_reverse_bulk(&engine, &points))
+    let hits = tokio::task::spawn_blocking(move || engine.reverse_bulk(&points))
         .await
         .map_err(|e| CoreError::io(format!("bulk worker failed: {e}")))??;
 
@@ -280,114 +270,6 @@ fn f32_le(buf: &[u8], off: usize) -> Result<f32, CoreError> {
         .and_then(|s| s.try_into().ok())
         .ok_or_else(|| CoreError::invalid("binary bulk body truncated"))?;
     Ok(f32::from_le_bytes(bytes))
-}
-
-fn run_reverse_bulk(
-    engine: &Engine,
-    points: &[[f64; 2]],
-) -> Result<Vec<ReverseBulkHit>, CoreError> {
-    let workers = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
-        .min(points.len())
-        .max(1);
-    let chunk_size = (points.len() + workers - 1) / workers;
-    let mut slots: Vec<Option<ReverseBulkHit>> = (0..points.len()).map(|_| None).collect();
-
-    std::thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(workers);
-        for (chunk_idx, chunk) in points.chunks(chunk_size).enumerate() {
-            let start = chunk_idx * chunk_size;
-            let end = start + chunk.len();
-            handles.push((
-                start..end,
-                scope.spawn(move || {
-                    let mut local = Vec::with_capacity(chunk.len());
-                    for (offset, point) in chunk.iter().enumerate() {
-                        let index = start + offset;
-                        let [lat, lon] = *point;
-                        let hit = match ReverseQuery::new(lat, lon, Some(1)) {
-                            Ok(query) => match engine.reverse(&query) {
-                                Ok(results) => {
-                                    if let Some(top) = results.first() {
-                                        ReverseBulkHit {
-                                            index,
-                                            place_id: Some(top.place_id),
-                                            score: Some(top.score),
-                                            display_name: Some(top.display_name.clone()),
-                                            error: None,
-                                        }
-                                    } else {
-                                        ReverseBulkHit {
-                                            index,
-                                            place_id: None,
-                                            score: None,
-                                            display_name: None,
-                                            error: Some("no results".into()),
-                                        }
-                                    }
-                                }
-                                Err(e) => ReverseBulkHit {
-                                    index,
-                                    place_id: None,
-                                    score: None,
-                                    display_name: None,
-                                    error: Some(e.to_string()),
-                                },
-                            },
-                            Err(e) => ReverseBulkHit {
-                                index,
-                                place_id: None,
-                                score: None,
-                                display_name: None,
-                                error: Some(e.to_string()),
-                            },
-                        };
-                        local.push((index, hit));
-                    }
-                    local
-                }),
-            ));
-        }
-        for (range, handle) in handles {
-            match handle.join() {
-                Ok(local) => {
-                    for (idx, hit) in local {
-                        if let Some(slot) = slots.get_mut(idx) {
-                            *slot = Some(hit);
-                        }
-                    }
-                }
-                Err(_) => {
-                    for idx in range {
-                        if let Some(slot) = slots.get_mut(idx) {
-                            *slot = Some(ReverseBulkHit {
-                                index: idx,
-                                place_id: None,
-                                score: None,
-                                display_name: None,
-                                error: Some("bulk worker panicked".into()),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    Ok(slots
-        .into_iter()
-        .enumerate()
-        .map(|(idx, slot)| {
-            slot.unwrap_or_else(|| ReverseBulkHit {
-                index: idx,
-                place_id: None,
-                score: None,
-                display_name: None,
-                error: Some("bulk worker panicked".into()),
-            })
-        })
-        .collect())
 }
 
 fn ndjson_bulk_response(hits: &[ReverseBulkHit]) -> Result<Response, ApiError> {
