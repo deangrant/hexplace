@@ -120,21 +120,25 @@ fn write_coords(path: &Path, places: &[Place]) -> Result<(), CoreError> {
     Ok(())
 }
 
+fn push_cstring(buf: &mut Vec<u8>, s: &str) -> Result<(), CoreError> {
+    if s.as_bytes().contains(&0) {
+        return Err(CoreError::storage("string field contains NUL"));
+    }
+    buf.extend_from_slice(s.as_bytes());
+    buf.push(0);
+    Ok(())
+}
+
 fn encode_strings(place: &Place) -> Result<Vec<u8>, CoreError> {
     let name = place.name.as_deref().unwrap_or("");
     let address = serde_json::to_string(&place.address)
         .map_err(|e| CoreError::storage(format!("address encode failed: {e}")))?;
     let mut buf = Vec::new();
-    buf.extend_from_slice(name.as_bytes());
-    buf.push(0);
-    buf.extend_from_slice(place.display_name.as_bytes());
-    buf.push(0);
-    buf.extend_from_slice(place.category.as_bytes());
-    buf.push(0);
-    buf.extend_from_slice(place.type_name.as_bytes());
-    buf.push(0);
-    buf.extend_from_slice(address.as_bytes());
-    buf.push(0);
+    push_cstring(&mut buf, name)?;
+    push_cstring(&mut buf, &place.display_name)?;
+    push_cstring(&mut buf, &place.category)?;
+    push_cstring(&mut buf, &place.type_name)?;
+    push_cstring(&mut buf, &address)?;
     Ok(buf)
 }
 
@@ -276,8 +280,8 @@ impl PlaceStore for MmapPlaceStore {
         }
         let blob = &self.strings[str_off..str_off + str_len];
         let parts = split_cstrings(blob)?;
-        if parts.len() < 5 {
-            return Err(CoreError::storage("string blob truncated fields"));
+        if parts.len() != 5 {
+            return Err(CoreError::storage("string blob field count mismatch"));
         }
         let name = if parts[0].is_empty() {
             None
@@ -329,6 +333,9 @@ fn split_cstrings(blob: &[u8]) -> Result<Vec<&str>, CoreError> {
             start = i + 1;
         }
     }
+    if start != blob.len() {
+        return Err(CoreError::storage("string blob missing final NUL"));
+    }
     Ok(out)
 }
 
@@ -370,5 +377,34 @@ mod tests {
         assert!((lat - 48.0).abs() < 1e-6);
         assert!((lon - 2.0).abs() < 1e-6);
         assert_eq!(store.importance(0).unwrap(), 0.5);
+    }
+
+    #[test]
+    fn encode_rejects_embedded_nul() {
+        let mut place = sample_place("ok");
+        place.name = Some("bad\0name".into());
+        let err = encode_strings(&place).unwrap_err();
+        assert!(err.to_string().contains("NUL"));
+
+        place.name = Some("ok".into());
+        place.display_name = "bad\0display".into();
+        let err = encode_strings(&place).unwrap_err();
+        assert!(err.to_string().contains("NUL"));
+    }
+
+    #[test]
+    fn split_cstrings_rejects_malformed_blobs() {
+        let missing_final = b"a\0b\0c\0d\0e";
+        let err = split_cstrings(missing_final).unwrap_err();
+        assert!(err.to_string().contains("missing final NUL"));
+
+        let too_few = b"a\0b\0c\0";
+        let parts = split_cstrings(too_few).unwrap();
+        assert_ne!(parts.len(), 5);
+
+        let exact = b"a\0b\0c\0d\0{}\0";
+        let parts = split_cstrings(exact).unwrap();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts[4], "{}");
     }
 }
