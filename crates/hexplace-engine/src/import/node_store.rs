@@ -23,6 +23,7 @@ pub trait NodeStore {
 /// Sorted `(id, lat_e7, lon_e7)` array with binary search.
 ///
 /// Default for regional extracts: cost scales with stored nodes, not max id.
+/// Duplicate ids keep the last-inserted coordinates after [`NodeStore::finalize`].
 #[derive(Debug, Default)]
 pub struct SparseNodeStore {
     entries: Vec<(i64, i32, i32)>,
@@ -54,8 +55,19 @@ impl NodeStore for SparseNodeStore {
     }
 
     fn finalize(&mut self) -> Result<(), CoreError> {
-        self.entries.sort_unstable_by_key(|e| e.0);
-        self.entries.dedup_by_key(|e| e.0);
+        // Stable sort preserves insertion order among equal ids; dedup keeps
+        // the last insert by copying later coords into the surviving slot.
+        self.entries.sort_by_key(|e| e.0);
+        // `dedup_by` passes (may_remove, kept); copy later coords into kept.
+        self.entries.dedup_by(|later, kept| {
+            if later.0 == kept.0 {
+                kept.1 = later.1;
+                kept.2 = later.2;
+                true
+            } else {
+                false
+            }
+        });
         self.sorted = true;
         Ok(())
     }
@@ -196,6 +208,18 @@ mod tests {
         assert_eq!(store.get(5), Some((3, 4)));
         assert_eq!(store.get(10), Some((1, 2)));
         assert_eq!(store.get(7), None);
+    }
+
+    #[test]
+    fn sparse_duplicate_ids_keep_last_insert() {
+        let mut store = SparseNodeStore::new();
+        store.insert(10, 1, 2).unwrap();
+        store.insert(10, 3, 4).unwrap();
+        store.insert(10, 5, 6).unwrap();
+        store.insert(7, 9, 8).unwrap();
+        store.finalize().unwrap();
+        assert_eq!(store.get(10), Some((5, 6)));
+        assert_eq!(store.get(7), Some((9, 8)));
     }
 
     #[test]
