@@ -17,6 +17,12 @@ pub struct GeoPoint {
 impl GeoPoint {
     /// Creates a point after validating latitude and longitude ranges.
     pub fn new(lat: f64, lon: f64) -> Result<Self, CoreError> {
+        if !lat.is_finite() {
+            return Err(CoreError::invalid(format!("latitude must be finite: {lat}")));
+        }
+        if !lon.is_finite() {
+            return Err(CoreError::invalid(format!("longitude must be finite: {lon}")));
+        }
         if !(-90.0..=90.0).contains(&lat) {
             return Err(CoreError::invalid(format!("latitude out of range: {lat}")));
         }

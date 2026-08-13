@@ -203,4 +203,37 @@ mod tests {
         assert_eq!(ha.len(), 64);
         assert_eq!(hb.len(), 64);
     }
+
+    #[test]
+    fn load_rejects_wrong_schema_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        let mut manifest = Manifest::new("memory://x", "abc", 1);
+        manifest.schema_version = SCHEMA_VERSION + 1;
+        manifest.save(&path).unwrap();
+        let err = Manifest::load(&path).unwrap_err();
+        assert!(err.to_string().contains("schema version"));
+    }
+
+    #[test]
+    fn load_rejects_wrong_store_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        let mut manifest = Manifest::new("memory://x", "abc", 1);
+        manifest.store_format = "legacy".into();
+        manifest.save(&path).unwrap();
+        let err = Manifest::load(&path).unwrap_err();
+        assert!(err.to_string().contains("store format"));
+    }
+
+    #[test]
+    fn load_rejects_wrong_spatial_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        let mut manifest = Manifest::new("memory://x", "abc", 1);
+        manifest.spatial_format = "legacy".into();
+        manifest.save(&path).unwrap();
+        let err = Manifest::load(&path).unwrap_err();
+        assert!(err.to_string().contains("spatial format"));
+    }
 }

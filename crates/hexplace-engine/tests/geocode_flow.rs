@@ -105,6 +105,61 @@ fn geocode_treats_and_as_literal_term() {
 }
 
 #[test]
+fn geocode_treats_or_and_not_as_literal_terms() {
+    let places = vec![
+        Place {
+            place_id: 0,
+            osm_type: OsmType::Node,
+            osm_id: 8,
+            lat: 51.5,
+            lon: -0.1,
+            name: Some("Black or White".into()),
+            display_name: String::new(),
+            category: "amenity".into(),
+            type_name: "cafe".into(),
+            address: AddressParts::default(),
+            importance: 0.4,
+        },
+        Place {
+            place_id: 0,
+            osm_type: OsmType::Node,
+            osm_id: 9,
+            lat: 51.51,
+            lon: -0.11,
+            name: Some("Do not Enter".into()),
+            display_name: String::new(),
+            category: "amenity".into(),
+            type_name: "cafe".into(),
+            address: AddressParts::default(),
+            importance: 0.4,
+        },
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    import_places(places, dir.path()).unwrap();
+    let engine = Engine::open(EngineConfig::new(dir.path())).unwrap();
+
+    let or_hits = engine
+        .geocode(&SearchQuery::new("black or white", Some(5)).unwrap())
+        .unwrap();
+    assert!(
+        or_hits
+            .iter()
+            .any(|h| h.name.as_deref() == Some("Black or White")),
+        "expected literal 'or' query to find place, got {or_hits:?}"
+    );
+
+    let not_hits = engine
+        .geocode(&SearchQuery::new("do not enter", Some(5)).unwrap())
+        .unwrap();
+    assert!(
+        not_hits
+            .iter()
+            .any(|h| h.name.as_deref() == Some("Do not Enter")),
+        "expected literal 'not' query to find place, got {not_hits:?}"
+    );
+}
+
+#[test]
 fn geocode_importance_rerank_beats_text_top1_cut() {
     // Many same-name low-importance hits would win a BM25-only TopDocs(1)
     // cut; overfetch + importance re-rank should promote the city.
@@ -239,12 +294,46 @@ fn batch_mixed_operations() {
 }
 
 #[test]
-fn import_pbf_fixture_when_present() {
+fn batch_rejects_empty_items() {
+    let dir = tempfile::tempdir().unwrap();
+    import_places(sample_places(), dir.path()).unwrap();
+    let engine = Engine::open(EngineConfig::new(dir.path())).unwrap();
+    let err = engine
+        .batch(&BatchRequest { items: vec![] })
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("empty"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn batch_rejects_over_max_items() {
+    let dir = tempfile::tempdir().unwrap();
+    import_places(sample_places(), dir.path()).unwrap();
+    let engine = Engine::open(EngineConfig::new(dir.path())).unwrap();
+    let items = (0..=Engine::MAX_BATCH_ITEMS)
+        .map(|i| BatchItem::Geocode {
+            id: Some(i.to_string()),
+            q: "x".into(),
+            limit: Some(1),
+        })
+        .collect();
+    let err = engine.batch(&BatchRequest { items }).unwrap_err();
+    assert!(
+        err.to_string().contains("batch limited"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn import_pbf_fixture_finds_monaco() {
     let pbf = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/tiny.osm.pbf");
-    if !pbf.exists() {
-        eprintln!("skipping PBF fixture test; missing {}", pbf.display());
-        return;
-    }
+    assert!(
+        pbf.exists(),
+        "missing required fixture {}; add testdata/tiny.osm.pbf",
+        pbf.display()
+    );
     let dir = tempfile::tempdir().unwrap();
     let manifest = import_pbf(&pbf, dir.path()).unwrap();
     assert!(manifest.place_count > 0);
@@ -255,6 +344,60 @@ fn import_pbf_fixture_when_present() {
     assert!(
         !hits.is_empty(),
         "expected Monaco search hits from fixture extract"
+    );
+}
+
+#[test]
+fn open_rejects_truncated_coords_column() {
+    let dir = tempfile::tempdir().unwrap();
+    import_places(sample_places(), dir.path()).unwrap();
+    let coords = dir.path().join("places/coords.bin");
+    let bytes = std::fs::read(&coords).unwrap();
+    assert!(bytes.len() > 16);
+    std::fs::write(&coords, &bytes[..16]).unwrap();
+    let err = match Engine::open(EngineConfig::new(dir.path())) {
+        Ok(_) => panic!("expected truncated coords open to fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().to_lowercase().contains("truncat")
+            || err.to_string().contains("place columns"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn open_rejects_missing_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    import_places(sample_places(), dir.path()).unwrap();
+    std::fs::remove_file(dir.path().join("manifest.json")).unwrap();
+    let err = match Engine::open(EngineConfig::new(dir.path())) {
+        Ok(_) => panic!("expected missing manifest open to fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("manifest") || err.to_string().contains("failed to read"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn open_rejects_manifest_place_count_mismatch() {
+    use hexplace_engine::Manifest;
+
+    let dir = tempfile::tempdir().unwrap();
+    import_places(sample_places(), dir.path()).unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+    let mut manifest = Manifest::load(&manifest_path).unwrap();
+    manifest.place_count = manifest.place_count + 99;
+    manifest.save(&manifest_path).unwrap();
+    let err = match Engine::open(EngineConfig::new(dir.path())) {
+        Ok(_) => panic!("expected place_count mismatch open to fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("place_count"),
+        "unexpected error: {err}"
     );
 }
 

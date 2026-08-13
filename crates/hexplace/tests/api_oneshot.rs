@@ -215,3 +215,72 @@ async fn reverse_bulk_binary_present_flag() {
     assert_eq!(miss_id, 0);
     assert_eq!(miss_score, 0.0);
 }
+
+#[tokio::test]
+async fn batch_empty_items_is_bad_request() {
+    let test = seed_app();
+    let response = test
+        .app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/batch")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"items":[]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn reverse_bulk_empty_points_is_bad_request() {
+    let test = seed_app();
+    let response = test
+        .app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/reverse/bulk")
+                .header("content-type", "application/json")
+                .header("accept", "application/x-ndjson")
+                .body(Body::from(r#"{"points":[]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = body_json(response).await;
+    assert!(
+        json["error"].as_str().unwrap_or_default().contains("empty"),
+        "unexpected body: {json}"
+    );
+}
+
+#[tokio::test]
+async fn reverse_bulk_binary_request_ndjson_hit() {
+    let test = seed_app();
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&43.7384f32.to_le_bytes());
+    body.extend_from_slice(&7.4246f32.to_le_bytes());
+    let response = test
+        .app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/reverse/bulk")
+                .header("content-type", "application/octet-stream")
+                .header("accept", "application/x-ndjson")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    let line = text.lines().next().expect("expected one ndjson line");
+    let first: serde_json::Value = serde_json::from_str(line).unwrap();
+    assert!(first.get("place_id").is_some(), "expected hit: {first}");
+}

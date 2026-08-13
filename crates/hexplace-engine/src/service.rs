@@ -54,6 +54,13 @@ impl Engine {
         let data_lock = acquire_shared_lock(&paths.root)?;
         let manifest = Manifest::load(&paths.manifest())?;
         let store = Arc::new(MmapPlaceStore::open(&paths.places())?);
+        if manifest.place_count != store.len() {
+            return Err(CoreError::storage(format!(
+                "manifest place_count {} does not match store length {}",
+                manifest.place_count,
+                store.len()
+            )));
+        }
         let text = Arc::new(TantivySearcher::open(&paths.text_dir())?);
         let spatial = Arc::new(H3SpatialIndex::open(&paths.spatial())?);
         Ok(Self {
