@@ -5,8 +5,8 @@ use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use hexplace_core::{CoreError, Place, PlaceId, ReverseQuery, SpatialSearcher};
 use h3o::{LatLng, Resolution};
+use hexplace_core::{CoreError, Place, PlaceId, ReverseQuery, SpatialSearcher};
 use memmap2::Mmap;
 
 use crate::binio::{self, u32_le_opt, u64_le, u64_le_opt};
@@ -183,14 +183,15 @@ struct CsrLayer {
 
 impl CsrLayer {
     fn open(paths: &CsrPaths) -> Result<Self, CoreError> {
-        let cells =
-            binio::map_file(&paths.cells(), CELLS_MAGIC, VERSION, |m| CoreError::index(m))?;
-        let offsets =
-            binio::map_file(&paths.offsets(), OFFSETS_MAGIC, VERSION, |m| CoreError::index(m))?;
-        let postings =
-            binio::map_file(&paths.postings(), POSTINGS_MAGIC, VERSION, |m| {
-                CoreError::index(m)
-            })?;
+        let cells = binio::map_file(&paths.cells(), CELLS_MAGIC, VERSION, |m| {
+            CoreError::index(m)
+        })?;
+        let offsets = binio::map_file(&paths.offsets(), OFFSETS_MAGIC, VERSION, |m| {
+            CoreError::index(m)
+        })?;
+        let postings = binio::map_file(&paths.postings(), POSTINGS_MAGIC, VERSION, |m| {
+            CoreError::index(m)
+        })?;
         let cell_count = header_count(&cells)?;
         let offset_count = header_count(&offsets)?;
         let posting_count = header_count(&postings)?;
@@ -271,8 +272,8 @@ fn header_count(mmap: &Mmap) -> Result<u64, CoreError> {
 }
 
 fn column_byte_len(count: u64, stride: usize) -> Result<usize, CoreError> {
-    let count = usize::try_from(count)
-        .map_err(|_| CoreError::index("CSR column count too large"))?;
+    let count =
+        usize::try_from(count).map_err(|_| CoreError::index("CSR column count too large"))?;
     let body = count
         .checked_mul(stride)
         .ok_or_else(|| CoreError::index("CSR column size overflow"))?;
@@ -375,4 +376,3 @@ impl SpatialSearcher for H3SpatialIndex {
 #[cfg(test)]
 #[path = "spatial_tests.rs"]
 mod tests;
-

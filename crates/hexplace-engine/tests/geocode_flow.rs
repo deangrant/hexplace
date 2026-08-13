@@ -96,9 +96,12 @@ fn geocode_treats_and_as_literal_term() {
     let engine = Engine::open(EngineConfig::new(dir.path())).unwrap();
 
     for q in ["fish and chips", "Fish AND Chips"] {
-        let hits = engine.geocode(&SearchQuery::new(q, Some(5)).unwrap()).unwrap();
+        let hits = engine
+            .geocode(&SearchQuery::new(q, Some(5)).unwrap())
+            .unwrap();
         assert!(
-            hits.iter().any(|h| h.name.as_deref() == Some("Fish and Chips")),
+            hits.iter()
+                .any(|h| h.name.as_deref() == Some("Fish and Chips")),
             "expected literal-term hit for query {q:?}, got {hits:?}"
         );
     }
@@ -298,13 +301,8 @@ fn batch_rejects_empty_items() {
     let dir = tempfile::tempdir().unwrap();
     import_places(sample_places(), dir.path()).unwrap();
     let engine = Engine::open(EngineConfig::new(dir.path())).unwrap();
-    let err = engine
-        .batch(&BatchRequest { items: vec![] })
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("empty"),
-        "unexpected error: {err}"
-    );
+    let err = engine.batch(&BatchRequest { items: vec![] }).unwrap_err();
+    assert!(err.to_string().contains("empty"), "unexpected error: {err}");
 }
 
 #[test]
@@ -389,7 +387,7 @@ fn open_rejects_manifest_place_count_mismatch() {
     import_places(sample_places(), dir.path()).unwrap();
     let manifest_path = dir.path().join("manifest.json");
     let mut manifest = Manifest::load(&manifest_path).unwrap();
-    manifest.place_count = manifest.place_count + 99;
+    manifest.place_count += 99;
     manifest.save(&manifest_path).unwrap();
     let err = match Engine::open(EngineConfig::new(dir.path())) {
         Ok(_) => panic!("expected place_count mismatch open to fail"),

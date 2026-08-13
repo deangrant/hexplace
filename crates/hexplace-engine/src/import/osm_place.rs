@@ -6,7 +6,7 @@ use hexplace_core::{AddressParts, OsmType, Place};
 
 use crate::display::format_display_name;
 
-fn tag_map<'a>(tags: &'a [(String, String)]) -> HashMap<&'a str, &'a str> {
+fn tag_map(tags: &[(String, String)]) -> HashMap<&str, &str> {
     tags.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
 }
 
@@ -170,11 +170,7 @@ mod tests {
             2,
             0.0,
             0.0,
-            &tags(&[
-                ("name", "Paris"),
-                ("place", "city"),
-                ("addr:country", "fr"),
-            ]),
+            &tags(&[("name", "Paris"), ("place", "city"), ("addr:country", "fr")]),
         )
         .unwrap();
         assert_eq!(place.address.country.as_deref(), Some("fr"));
@@ -195,13 +191,7 @@ mod tests {
 
     #[test]
     fn unnamed_amenity_without_address_is_dropped() {
-        let place = place_from_tags(
-            OsmType::Node,
-            4,
-            0.0,
-            0.0,
-            &tags(&[("amenity", "cafe")]),
-        );
+        let place = place_from_tags(OsmType::Node, 4, 0.0, 0.0, &tags(&[("amenity", "cafe")]));
         assert!(place.is_none());
     }
 }

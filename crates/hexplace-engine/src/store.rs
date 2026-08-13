@@ -194,14 +194,15 @@ pub struct MmapPlaceStore {
 impl MmapPlaceStore {
     /// Opens a columnar place store directory.
     pub fn open(paths: &PlacePaths) -> Result<Self, CoreError> {
-        let coords =
-            binio::map_file(&paths.coords(), COORDS_MAGIC, VERSION, |m| CoreError::storage(m))?;
-        let meta =
-            binio::map_file(&paths.meta(), META_MAGIC, VERSION, |m| CoreError::storage(m))?;
-        let strings =
-            binio::map_file(&paths.strings(), STRINGS_MAGIC, VERSION, |m| {
-                CoreError::storage(m)
-            })?;
+        let coords = binio::map_file(&paths.coords(), COORDS_MAGIC, VERSION, |m| {
+            CoreError::storage(m)
+        })?;
+        let meta = binio::map_file(&paths.meta(), META_MAGIC, VERSION, |m| {
+            CoreError::storage(m)
+        })?;
+        let strings = binio::map_file(&paths.strings(), STRINGS_MAGIC, VERSION, |m| {
+            CoreError::storage(m)
+        })?;
         let count = u64_le(&coords, 8)?;
         let meta_count = u64_le(&meta, 8)?;
         if count != meta_count {
@@ -266,9 +267,8 @@ impl PlaceStore for MmapPlaceStore {
             .ok_or_else(|| CoreError::storage("string blob out of range"))?;
         let parts = split_cstrings(blob)?;
         let [name_s, display_name, category, type_name, address_json] =
-            <[&str; 5]>::try_from(parts.as_slice()).map_err(|_| {
-                CoreError::storage("string blob field count mismatch")
-            })?;
+            <[&str; 5]>::try_from(parts.as_slice())
+                .map_err(|_| CoreError::storage("string blob field count mismatch"))?;
         let name = if name_s.is_empty() {
             None
         } else {

@@ -24,7 +24,10 @@ pub fn create_staging_dir(target: &Path) -> Result<PathBuf, CoreError> {
         .unwrap_or(0);
     let staging = parent.join(format!(".{name}.staging-{}-{stamp}", std::process::id()));
     fs::create_dir_all(&staging).map_err(|e| {
-        CoreError::import(format!("failed to create staging {}: {e}", staging.display()))
+        CoreError::import(format!(
+            "failed to create staging {}: {e}",
+            staging.display()
+        ))
     })?;
     Ok(staging)
 }
@@ -81,9 +84,10 @@ pub fn acquire_shared_lock(data_dir: &Path) -> Result<File, CoreError> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(true)
         .open(&path)
         .map_err(|e| CoreError::io(format!("failed to open {}: {e}", path.display())))?;
-    file.lock_shared()
+    FileExt::lock_shared(&file)
         .map_err(|e| CoreError::io(format!("failed to lock {}: {e}", path.display())))?;
     Ok(file)
 }
@@ -102,10 +106,7 @@ pub fn publish_data_dir(staging: &Path, target: &Path) -> Result<(), CoreError> 
     let obsolete = if target.exists() {
         let path = obsolete_path(target)?;
         fs::rename(target, &path).map_err(|e| {
-            CoreError::import(format!(
-                "failed to move {} aside: {e}",
-                target.display()
-            ))
+            CoreError::import(format!("failed to move {} aside: {e}", target.display()))
         })?;
         Some(path)
     } else {
@@ -148,9 +149,10 @@ fn acquire_exclusive_lock(data_dir: &Path) -> Result<File, CoreError> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(true)
         .open(&path)
         .map_err(|e| CoreError::io(format!("failed to open {}: {e}", path.display())))?;
-    match file.try_lock_exclusive() {
+    match FileExt::try_lock_exclusive(&file) {
         Ok(()) => Ok(file),
         Err(e) if e.kind() == ErrorKind::WouldBlock => Err(CoreError::import(
             "data directory in use; stop serve before re-importing",
@@ -172,10 +174,7 @@ fn obsolete_path(target: &Path) -> Result<PathBuf, CoreError> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    Ok(parent.join(format!(
-        ".{name}.obsolete-{}-{stamp}",
-        std::process::id()
-    )))
+    Ok(parent.join(format!(".{name}.obsolete-{}-{stamp}", std::process::id())))
 }
 
 #[cfg(test)]

@@ -18,9 +18,7 @@ use crate::text;
 
 use self::node_store::{deg_to_e7, e7_to_deg, NodeStore, SparseNodeStore};
 use self::osm_place::{has_searchable_name, is_named_highway, place_from_tags};
-use self::publish::{
-    cleanup_orphans, create_staging_dir, discard_staging, publish_data_dir,
-};
+use self::publish::{cleanup_orphans, create_staging_dir, discard_staging, publish_data_dir};
 
 pub use publish::acquire_shared_lock;
 
@@ -157,9 +155,7 @@ fn extract_places(pbf_path: &Path) -> Result<Vec<Place>, CoreError> {
     Ok(places)
 }
 
-fn collect_tags<'a>(
-    tags: impl Iterator<Item = (&'a str, &'a str)>,
-) -> Vec<(String, String)> {
+fn collect_tags<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> Vec<(String, String)> {
     tags.map(|(k, v)| (k.to_owned(), v.to_owned())).collect()
 }
 

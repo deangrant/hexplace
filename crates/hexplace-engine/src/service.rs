@@ -96,7 +96,7 @@ impl Engine {
         }
 
         let workers = worker_count(points.len());
-        let chunk_size = (points.len() + workers - 1) / workers;
+        let chunk_size = points.len().div_ceil(workers);
         let mut slots: Vec<Option<ReverseBulkHit>> = (0..points.len()).map(|_| None).collect();
 
         std::thread::scope(|scope| {
@@ -225,7 +225,7 @@ impl Geocoder for Engine {
         }
 
         let workers = worker_count(request.items.len());
-        let chunk_size = (request.items.len() + workers - 1) / workers;
+        let chunk_size = request.items.len().div_ceil(workers);
         let mut slots: Vec<Option<BatchResult>> = (0..request.items.len()).map(|_| None).collect();
 
         std::thread::scope(|scope| {
@@ -244,15 +244,13 @@ impl Geocoder for Engine {
                     }),
                 ));
             }
-            fill_slots_from_joins(&mut slots, handles, |idx| {
-                match request.items.get(idx) {
-                    Some(item) => batch_item_error(item, "batch worker panicked"),
-                    None => BatchResult {
-                        id: None,
-                        results: Vec::new(),
-                        error: Some("batch worker panicked".into()),
-                    },
-                }
+            fill_slots_from_joins(&mut slots, handles, |idx| match request.items.get(idx) {
+                Some(item) => batch_item_error(item, "batch worker panicked"),
+                None => BatchResult {
+                    id: None,
+                    results: Vec::new(),
+                    error: Some("batch worker panicked".into()),
+                },
             });
         });
 
@@ -282,11 +280,13 @@ fn worker_count(len: usize) -> usize {
         .max(1)
 }
 
-fn fill_slots_from_joins<T, F>(
-    slots: &mut [Option<T>],
-    handles: Vec<(std::ops::Range<usize>, std::thread::ScopedJoinHandle<'_, Vec<(usize, T)>>)>,
-    panic_value: F,
-) where
+type JoinHandles<'scope, T> = Vec<(
+    std::ops::Range<usize>,
+    std::thread::ScopedJoinHandle<'scope, Vec<(usize, T)>>,
+)>;
+
+fn fill_slots_from_joins<T, F>(slots: &mut [Option<T>], handles: JoinHandles<'_, T>, panic_value: F)
+where
     F: Fn(usize) -> T,
 {
     for (range, handle) in handles {
@@ -430,17 +430,11 @@ mod tests {
         assert_eq!(filled.len(), 2);
         assert_eq!(filled[0].0, 1);
         assert_eq!(filled[0].1.id.as_deref(), Some("b"));
-        assert_eq!(
-            filled[0].1.error.as_deref(),
-            Some("batch worker panicked")
-        );
+        assert_eq!(filled[0].1.error.as_deref(), Some("batch worker panicked"));
         assert!(filled[0].1.results.is_empty());
         assert_eq!(filled[1].0, 2);
         assert_eq!(filled[1].1.id, None);
-        assert_eq!(
-            filled[1].1.error.as_deref(),
-            Some("batch worker panicked")
-        );
+        assert_eq!(filled[1].1.error.as_deref(), Some("batch worker panicked"));
     }
 
     #[test]

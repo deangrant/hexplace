@@ -108,7 +108,7 @@ async fn geocode_and_reverse_and_batch() {
         .unwrap();
     assert_eq!(geo.status(), StatusCode::OK);
     let geo_json = body_json(geo).await;
-    assert!(geo_json.as_array().unwrap().len() >= 1);
+    assert!(!geo_json.as_array().unwrap().is_empty());
 
     let rev = test
         .app
@@ -123,7 +123,7 @@ async fn geocode_and_reverse_and_batch() {
         .unwrap();
     assert_eq!(rev.status(), StatusCode::OK);
     let rev_json = body_json(rev).await;
-    assert!(rev_json.as_array().unwrap().len() >= 1);
+    assert!(!rev_json.as_array().unwrap().is_empty());
 
     let batch_body = serde_json::json!({
         "items": [

@@ -191,10 +191,8 @@ fn flat_get(path: &Path, id: i64) -> Result<Option<(i32, i32)>, CoreError> {
         return Ok(None);
     }
     let off = (id as usize) * 8;
-    let lat = i32_le_opt(&mmap, off)
-        .ok_or_else(|| CoreError::storage("truncated i32 read"))?;
-    let lon = i32_le_opt(&mmap, off + 4)
-        .ok_or_else(|| CoreError::storage("truncated i32 read"))?;
+    let lat = i32_le_opt(&mmap, off).ok_or_else(|| CoreError::storage("truncated i32 read"))?;
+    let lon = i32_le_opt(&mmap, off + 4).ok_or_else(|| CoreError::storage("truncated i32 read"))?;
     Ok(Some((lat, lon)))
 }
 
