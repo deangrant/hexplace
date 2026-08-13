@@ -38,6 +38,9 @@ data/
     coarse/         # CSR H3 res 6 fallback
 ```
 
+The place store is the `places/` directory (not a top-level `places.bin`). Import
+cleanup removes a legacy `places.bin` if one is still present.
+
 `hexplace serve` refuses to start if `manifest.json` is missing or the schema
 version / format markers are unsupported.
 

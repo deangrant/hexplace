@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use hexplace_core::{Geocoder, ReverseQuery};
+use hexplace_core::{CoreError, Geocoder, ReverseQuery};
 
 use crate::service::Engine;
 
@@ -22,16 +22,25 @@ pub struct BenchReport {
 }
 
 /// Times `count` reverse lookups over points near `seed`.
-pub fn bench_reverse(engine: &Engine, seed_lat: f64, seed_lon: f64, count: usize) -> BenchReport {
+///
+/// # Errors
+///
+/// Returns the first reverse lookup or query-construction failure.
+pub fn bench_reverse(
+    engine: &Engine,
+    seed_lat: f64,
+    seed_lon: f64,
+    count: usize,
+) -> Result<BenchReport, CoreError> {
     let mut latencies_ms = Vec::with_capacity(count);
     let start = Instant::now();
     for i in 0..count {
         // Small deterministic jitter so we do not hit one identical cell only.
         let lat = seed_lat + ((i % 50) as f64) * 0.0001;
         let lon = seed_lon + ((i % 70) as f64) * 0.0001;
-        let query = ReverseQuery::new(lat, lon, Some(1)).expect("valid reverse query");
+        let query = ReverseQuery::new(lat, lon, Some(1))?;
         let item_start = Instant::now();
-        let _ = engine.reverse(&query);
+        engine.reverse(&query)?;
         latencies_ms.push(item_start.elapsed().as_secs_f64() * 1000.0);
     }
     let total_secs = start.elapsed().as_secs_f64();
@@ -43,13 +52,13 @@ pub fn bench_reverse(engine: &Engine, seed_lat: f64, seed_lon: f64, count: usize
     } else {
         0.0
     };
-    BenchReport {
+    Ok(BenchReport {
         count,
         total_secs,
         p50_ms,
         p99_ms,
         qps,
-    }
+    })
 }
 
 fn percentile(sorted_ms: &[f64], p: f64) -> f64 {

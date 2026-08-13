@@ -162,7 +162,7 @@ pub fn run_batch(args: BatchArgs) -> Result<(), CoreError> {
 /// Times reverse lookups and prints a summary.
 pub fn run_bench(args: BenchArgs) -> Result<(), CoreError> {
     let engine = Engine::open(EngineConfig::new(&args.data_dir))?;
-    let report = bench_reverse(&engine, args.lat, args.lon, args.count);
+    let report = bench_reverse(&engine, args.lat, args.lon, args.count)?;
     println!(
         "reverse_bulk count={} total_s={:.4} p50_ms={:.4} p99_ms={:.4} qps={:.1}",
         report.count, report.total_secs, report.p50_ms, report.p99_ms, report.qps

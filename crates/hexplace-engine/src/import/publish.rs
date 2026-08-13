@@ -59,6 +59,18 @@ pub fn cleanup_orphans(target: &Path) -> Result<(), CoreError> {
             let _ = fs::remove_dir_all(&path);
         }
     }
+    // Pre-columnar leftover beside places/; ignore missing file.
+    let legacy_places = target.join("places.bin");
+    match fs::remove_file(&legacy_places) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(CoreError::io(format!(
+                "failed to remove {}: {e}",
+                legacy_places.display()
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -164,4 +176,20 @@ fn obsolete_path(target: &Path) -> Result<PathBuf, CoreError> {
         ".{name}.obsolete-{}-{stamp}",
         std::process::id()
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_orphans_removes_legacy_places_bin() {
+        let parent = tempfile::tempdir().unwrap();
+        let data = parent.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let legacy = data.join("places.bin");
+        fs::write(&legacy, b"obsolete").unwrap();
+        cleanup_orphans(&data).unwrap();
+        assert!(!legacy.exists());
+    }
 }
