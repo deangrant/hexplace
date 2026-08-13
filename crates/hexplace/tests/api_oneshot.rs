@@ -2,6 +2,7 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use axum::Router;
 use hexplace::api::{router, AppState};
 use hexplace_core::{AddressParts, OsmType, Place};
 use hexplace_engine::import::import_places;
@@ -9,10 +10,14 @@ use hexplace_engine::{Engine, EngineConfig};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-fn seed_engine() -> Engine {
+/// Holds the router and its temp data dir for the test lifetime.
+struct TestApp {
+    app: Router,
+    _dir: tempfile::TempDir,
+}
+
+fn seed_app() -> TestApp {
     let dir = tempfile::tempdir().unwrap();
-    // Leak the tempdir for the duration of the process so paths stay valid.
-    let path = dir.keep();
     import_places(
         vec![Place {
             place_id: 0,
@@ -32,10 +37,14 @@ fn seed_engine() -> Engine {
             },
             importance: 0.9,
         }],
-        &path,
+        dir.path(),
     )
     .unwrap();
-    Engine::open(EngineConfig::new(path)).unwrap()
+    let engine = Engine::open(EngineConfig::new(dir.path())).unwrap();
+    TestApp {
+        app: router(AppState::new(engine)),
+        _dir: dir,
+    }
 }
 
 async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -45,8 +54,9 @@ async fn body_json(response: axum::response::Response) -> serde_json::Value {
 
 #[tokio::test]
 async fn health_ok() {
-    let app = router(AppState::new(seed_engine()));
-    let response = app
+    let test = seed_app();
+    let response = test
+        .app
         .oneshot(
             Request::builder()
                 .uri("/v1/health")
@@ -62,8 +72,9 @@ async fn health_ok() {
 
 #[tokio::test]
 async fn status_ready_without_source_path() {
-    let app = router(AppState::new(seed_engine()));
-    let response = app
+    let test = seed_app();
+    let response = test
+        .app
         .oneshot(
             Request::builder()
                 .uri("/v1/status")
@@ -82,9 +93,10 @@ async fn status_ready_without_source_path() {
 
 #[tokio::test]
 async fn geocode_and_reverse_and_batch() {
-    let app = router(AppState::new(seed_engine()));
+    let test = seed_app();
 
-    let geo = app
+    let geo = test
+        .app
         .clone()
         .oneshot(
             Request::builder()
@@ -98,7 +110,8 @@ async fn geocode_and_reverse_and_batch() {
     let geo_json = body_json(geo).await;
     assert!(geo_json.as_array().unwrap().len() >= 1);
 
-    let rev = app
+    let rev = test
+        .app
         .clone()
         .oneshot(
             Request::builder()
@@ -118,7 +131,8 @@ async fn geocode_and_reverse_and_batch() {
             {"op": "reverse", "id": "2", "lat": 43.7384, "lon": 7.4246}
         ]
     });
-    let batch = app
+    let batch = test
+        .app
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -136,11 +150,12 @@ async fn geocode_and_reverse_and_batch() {
 
 #[tokio::test]
 async fn reverse_bulk_ndjson() {
-    let app = router(AppState::new(seed_engine()));
+    let test = seed_app();
     let body = serde_json::json!({
         "points": [[43.7384, 7.4246], [43.7385, 7.4247]]
     });
-    let response = app
+    let response = test
+        .app
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -163,12 +178,13 @@ async fn reverse_bulk_ndjson() {
 
 #[tokio::test]
 async fn reverse_bulk_binary_present_flag() {
-    let app = router(AppState::new(seed_engine()));
+    let test = seed_app();
     // Hit near Monaco, then a mid-ocean miss.
     let body = serde_json::json!({
         "points": [[43.7384, 7.4246], [0.0, -150.0]]
     });
-    let response = app
+    let response = test
+        .app
         .oneshot(
             Request::builder()
                 .method("POST")
