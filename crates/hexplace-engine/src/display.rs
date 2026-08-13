@@ -3,6 +3,10 @@
 use hexplace_core::{AddressParts, Place};
 
 /// Builds a human-readable display name from name and address parts.
+///
+/// Parts are appended independently in fixed order — name, house number, road,
+/// city, postcode, country — and joined with `", "`. House number is not merged
+/// with road; `country_code` is omitted. Locale-aware formatting is out of scope.
 pub fn format_display_name(name: Option<&str>, address: &AddressParts) -> String {
     let mut parts: Vec<&str> = Vec::new();
     if let Some(n) = name {

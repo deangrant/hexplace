@@ -275,6 +275,10 @@ fn classify(map: &HashMap<&str, &str>) -> (String, String) {
     ("place".to_owned(), "yes".to_owned())
 }
 
+/// Heuristic import-time importance from OSM `category` / `type_name`.
+///
+/// Named features keep the base weight; unnamed ones are scaled down. This is
+/// not a learned, population, or multilingual importance model.
 fn importance_for(category: &str, type_name: &str, has_name: bool) -> f32 {
     let base = match (category, type_name) {
         ("place", "city") => 0.9,

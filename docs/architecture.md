@@ -89,4 +89,7 @@ Those changes should not require redesigning the HTTP API.
 - OSM relation import (admin boundaries, multipolygon POIs) and full
   administrative polygon point-in-polygon hierarchy
 - House-number interpolation along ways
-- Multilingual importance models beyond tag heuristics
+- Nominatim-style or locale-aware display names (labels use a fixed order:
+  name, house number, road, city, postcode, country as separate comma parts)
+- Learned, population-based, or multilingual importance models (import uses a
+  coarse OSM tag heuristic only)
