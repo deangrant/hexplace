@@ -22,6 +22,7 @@ fn main() -> ExitCode {
         Command::Search(args) => geofind::cli::run_search(args),
         Command::Reverse(args) => geofind::cli::run_reverse(args),
         Command::Batch(args) => geofind::cli::run_batch(args),
+        Command::Bench(args) => geofind::cli::run_bench(args),
     };
 
     match result {

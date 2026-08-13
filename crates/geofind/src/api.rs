@@ -4,13 +4,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use geofind_core::{
-    BatchRequest, BatchResponse, CoreError, Geocoder, PlaceHit, ReverseQuery, SearchQuery,
+    BatchRequest, BatchResponse, CoreError, Geocoder, PlaceHit, ReverseBulkHit, ReverseBulkRequest,
+    ReverseQuery, SearchQuery,
 };
 use geofind_engine::Engine;
 use serde::{Deserialize, Serialize};
@@ -32,19 +34,40 @@ impl AppState {
     }
 }
 
+/// Max JSON body size for bulk endpoints.
+const BATCH_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+/// Request timeout for lightweight endpoints.
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Request timeout for large batch jobs.
+const BATCH_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+
 /// Builds the `/v1` router.
 pub fn router(state: AppState) -> Router {
+    let batch_routes = Router::new()
+        .route(
+            "/v1/batch",
+            post(batch).layer(DefaultBodyLimit::max(BATCH_BODY_LIMIT_BYTES)),
+        )
+        .route(
+            "/v1/reverse/bulk",
+            post(reverse_bulk).layer(DefaultBodyLimit::max(BATCH_BODY_LIMIT_BYTES)),
+        )
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            BATCH_REQUEST_TIMEOUT,
+        ));
+
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/status", get(status))
         .route("/v1/geocode", get(geocode))
         .route("/v1/reverse", get(reverse))
-        .route("/v1/batch", post(batch))
-        .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(30),
+            DEFAULT_REQUEST_TIMEOUT,
         ))
+        .merge(batch_routes)
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
@@ -103,7 +126,10 @@ struct StatusResponse {
     schema_version: u32,
     place_count: u64,
     source_path: String,
-    h3_resolution: u8,
+    h3_resolution_fine: u8,
+    h3_resolution_coarse: u8,
+    store_format: String,
+    spatial_format: String,
     built_at_unix: u64,
 }
 
@@ -114,7 +140,10 @@ async fn status(State(state): State<AppState>) -> Json<StatusResponse> {
         schema_version: m.schema_version,
         place_count: m.place_count,
         source_path: m.source_path.clone(),
-        h3_resolution: m.h3_resolution,
+        h3_resolution_fine: m.h3_resolution_fine,
+        h3_resolution_coarse: m.h3_resolution_coarse,
+        store_format: m.store_format.clone(),
+        spatial_format: m.spatial_format.clone(),
         built_at_unix: m.built_at_unix,
     })
 }
@@ -154,8 +183,184 @@ async fn batch(
     State(state): State<AppState>,
     Json(body): Json<BatchRequest>,
 ) -> Result<Json<BatchResponse>, ApiError> {
-    let response = state.engine.batch(&body)?;
+    let engine = Arc::clone(&state.engine);
+    let response = tokio::task::spawn_blocking(move || engine.batch(&body))
+        .await
+        .map_err(|e| CoreError::io(format!("batch worker failed: {e}")))??;
     Ok(Json(response))
+}
+
+async fn reverse_bulk(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, ApiError> {
+    let accept = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/x-ndjson");
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/json");
+
+    let bytes = axum::body::to_bytes(body, BATCH_BODY_LIMIT_BYTES)
+        .await
+        .map_err(|e| CoreError::invalid(format!("failed to read body: {e}")))?;
+
+    let points = if content_type.contains("octet-stream") {
+        parse_binary_points(&bytes)?
+    } else {
+        let req: ReverseBulkRequest = serde_json::from_slice(&bytes)
+            .map_err(|e| CoreError::invalid(format!("invalid bulk JSON: {e}")))?;
+        if req.points.is_empty() {
+            return Err(CoreError::invalid("points must not be empty").into());
+        }
+        if req.points.len() > Engine::MAX_BATCH_ITEMS {
+            return Err(CoreError::invalid(format!(
+                "bulk limited to {} points",
+                Engine::MAX_BATCH_ITEMS
+            ))
+            .into());
+        }
+        req.points
+    };
+
+    let engine = Arc::clone(&state.engine);
+    let hits = tokio::task::spawn_blocking(move || run_reverse_bulk(&engine, &points))
+        .await
+        .map_err(|e| CoreError::io(format!("bulk worker failed: {e}")))??;
+
+    if accept.contains("octet-stream") {
+        Ok(binary_bulk_response(&hits))
+    } else {
+        Ok(ndjson_bulk_response(&hits)?)
+    }
+}
+
+fn parse_binary_points(bytes: &[u8]) -> Result<Vec<[f64; 2]>, CoreError> {
+    if bytes.len() % 8 != 0 {
+        return Err(CoreError::invalid(
+            "binary bulk body must be packed f32 lat/lon pairs",
+        ));
+    }
+    let count = bytes.len() / 8;
+    if count == 0 {
+        return Err(CoreError::invalid("points must not be empty"));
+    }
+    if count > Engine::MAX_BATCH_ITEMS {
+        return Err(CoreError::invalid(format!(
+            "bulk limited to {} points",
+            Engine::MAX_BATCH_ITEMS
+        )));
+    }
+    let mut points = Vec::with_capacity(count);
+    for i in 0..count {
+        let off = i * 8;
+        let lat = f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as f64;
+        let lon = f32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap()) as f64;
+        points.push([lat, lon]);
+    }
+    Ok(points)
+}
+
+fn run_reverse_bulk(
+    engine: &Engine,
+    points: &[[f64; 2]],
+) -> Result<Vec<ReverseBulkHit>, CoreError> {
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(points.len())
+        .max(1);
+    let chunk_size = (points.len() + workers - 1) / workers;
+    let mut slots: Vec<Option<ReverseBulkHit>> = (0..points.len()).map(|_| None).collect();
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for (chunk_idx, chunk) in points.chunks(chunk_size).enumerate() {
+            let start = chunk_idx * chunk_size;
+            handles.push(scope.spawn(move || {
+                let mut local = Vec::with_capacity(chunk.len());
+                for (offset, point) in chunk.iter().enumerate() {
+                    let index = start + offset;
+                    let hit = match ReverseQuery::new(point[0], point[1], Some(1)) {
+                        Ok(query) => match engine.reverse(&query) {
+                            Ok(results) => {
+                                if let Some(top) = results.first() {
+                                    ReverseBulkHit {
+                                        index,
+                                        place_id: Some(top.place_id),
+                                        score: Some(top.score),
+                                        display_name: Some(top.display_name.clone()),
+                                        error: None,
+                                    }
+                                } else {
+                                    ReverseBulkHit {
+                                        index,
+                                        place_id: None,
+                                        score: None,
+                                        display_name: None,
+                                        error: Some("no results".into()),
+                                    }
+                                }
+                            }
+                            Err(e) => ReverseBulkHit {
+                                index,
+                                place_id: None,
+                                score: None,
+                                display_name: None,
+                                error: Some(e.to_string()),
+                            },
+                        },
+                        Err(e) => ReverseBulkHit {
+                            index,
+                            place_id: None,
+                            score: None,
+                            display_name: None,
+                            error: Some(e.to_string()),
+                        },
+                    };
+                    local.push((index, hit));
+                }
+                local
+            }));
+        }
+        for handle in handles {
+            if let Ok(local) = handle.join() {
+                for (idx, hit) in local {
+                    slots[idx] = Some(hit);
+                }
+            }
+        }
+    });
+
+    Ok(slots
+        .into_iter()
+        .map(|slot| slot.expect("bulk slot filled"))
+        .collect())
+}
+
+fn ndjson_bulk_response(hits: &[ReverseBulkHit]) -> Result<Response, ApiError> {
+    let mut out = String::new();
+    for hit in hits {
+        let line = serde_json::to_string(hit)
+            .map_err(|e| CoreError::io(format!("ndjson encode failed: {e}")))?;
+        out.push_str(&line);
+        out.push('\n');
+    }
+    Ok(([(header::CONTENT_TYPE, "application/x-ndjson")], out).into_response())
+}
+
+fn binary_bulk_response(hits: &[ReverseBulkHit]) -> Response {
+    let mut bytes = Vec::with_capacity(hits.len() * 12);
+    for hit in hits {
+        let id = hit.place_id.unwrap_or(u64::MAX);
+        let score = hit.score.unwrap_or(f32::NAN);
+        bytes.extend_from_slice(&id.to_le_bytes());
+        bytes.extend_from_slice(&score.to_le_bytes());
+    }
+    ([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response()
 }
 
 #[derive(Debug)]

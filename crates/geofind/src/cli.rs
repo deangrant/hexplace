@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use geofind_core::{BatchItem, BatchRequest, CoreError, Geocoder, ReverseQuery, SearchQuery};
-use geofind_engine::{import_pbf, Engine, EngineConfig};
+use geofind_engine::{bench_reverse, import_pbf, Engine, EngineConfig};
 use tokio::runtime::Runtime;
 
 use crate::api;
@@ -33,6 +33,8 @@ pub enum Command {
     Reverse(ReverseArgs),
     /// Run a JSONL batch of geocode/reverse operations.
     Batch(BatchArgs),
+    /// Time reverse lookups against an imported data directory.
+    Bench(BenchArgs),
 }
 
 /// Arguments for `geofind import`.
@@ -98,6 +100,23 @@ pub struct BatchArgs {
     pub data_dir: PathBuf,
 }
 
+/// Arguments for `geofind bench`.
+#[derive(Debug, Parser)]
+pub struct BenchArgs {
+    /// Imported data directory.
+    #[arg(long, env = "GEOFIND_DATA", default_value = "./data")]
+    pub data_dir: PathBuf,
+    /// Seed latitude for reverse samples.
+    #[arg(long, default_value_t = 43.7384)]
+    pub lat: f64,
+    /// Seed longitude for reverse samples.
+    #[arg(long, default_value_t = 7.4246)]
+    pub lon: f64,
+    /// Number of reverse lookups to time.
+    #[arg(long, default_value_t = 10_000)]
+    pub count: usize,
+}
+
 /// Runs PBF import.
 pub fn run_import(args: ImportArgs) -> Result<(), CoreError> {
     let manifest = import_pbf(&args.pbf, &args.data_dir)?;
@@ -138,6 +157,17 @@ pub fn run_batch(args: BatchArgs) -> Result<(), CoreError> {
     let items = read_batch_items(&args.file)?;
     let response = engine.batch(&BatchRequest { items })?;
     write_json(&response)
+}
+
+/// Times reverse lookups and prints a summary.
+pub fn run_bench(args: BenchArgs) -> Result<(), CoreError> {
+    let engine = Engine::open(EngineConfig::new(&args.data_dir))?;
+    let report = bench_reverse(&engine, args.lat, args.lon, args.count);
+    println!(
+        "reverse_bulk count={} total_s={:.4} p50_ms={:.4} p99_ms={:.4} qps={:.1}",
+        report.count, report.total_secs, report.p50_ms, report.p99_ms, report.qps
+    );
+    Ok(())
 }
 
 fn read_batch_items(path: &PathBuf) -> Result<Vec<BatchItem>, CoreError> {

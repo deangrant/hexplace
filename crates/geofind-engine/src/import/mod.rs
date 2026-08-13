@@ -1,5 +1,7 @@
 //! OSM PBF import into places and secondary indexes.
 
+pub mod node_store;
+
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -9,9 +11,11 @@ use tracing::info;
 
 use crate::display::{ensure_display_name, format_display_name};
 use crate::manifest::{hash_file, DataPaths, Manifest};
-use crate::spatial::{self, DEFAULT_H3_RESOLUTION};
+use crate::spatial;
 use crate::store::PlaceStoreWriter;
 use crate::text;
+
+use self::node_store::{deg_to_e7, e7_to_deg, NodeStore, SparseNodeStore};
 
 /// Imports an OSM PBF file into a Geofind data directory.
 pub fn import_pbf(pbf_path: &Path, data_dir: &Path) -> Result<Manifest, CoreError> {
@@ -28,58 +32,44 @@ pub fn import_pbf(pbf_path: &Path, data_dir: &Path) -> Result<Manifest, CoreErro
         ));
     }
 
-    let mut writer = PlaceStoreWriter::new();
-    for place in extracted {
-        writer.push(place);
-    }
-    writer.write_to(&paths.places())?;
-
-    text::build_index(writer.places(), &paths.text_dir())?;
-    spatial::build_index(writer.places(), &paths.spatial(), DEFAULT_H3_RESOLUTION)?;
+    write_indexes(&extracted, &paths)?;
 
     let source_hash = hash_file(pbf_path)?;
     let manifest = Manifest::new(
         pbf_path.display().to_string(),
         source_hash,
-        writer.len() as u64,
-        DEFAULT_H3_RESOLUTION,
+        extracted.len() as u64,
     );
     manifest.save(&paths.manifest())?;
     info!(places = manifest.place_count, "import complete");
     Ok(manifest)
 }
 
-struct NodeCoord {
-    lat: f64,
-    lon: f64,
+fn write_indexes(places: &[Place], paths: &DataPaths) -> Result<(), CoreError> {
+    let mut writer = PlaceStoreWriter::new();
+    for place in places {
+        writer.push(place.clone());
+    }
+    writer.write_to(&paths.places())?;
+    text::build_index(writer.places(), &paths.text_dir())?;
+    spatial::build_index(writer.places(), &paths.spatial())?;
+    Ok(())
 }
 
 fn extract_places(pbf_path: &Path) -> Result<Vec<Place>, CoreError> {
-    // First pass: collect node coordinates needed for way centroids.
-    let mut coords: HashMap<i64, NodeCoord> = HashMap::new();
+    let mut coords = SparseNodeStore::new();
     let reader = ElementReader::from_path(pbf_path)
         .map_err(|e| CoreError::import(format!("failed to open PBF: {e}")))?;
     reader
         .for_each(|element| {
             if let Element::Node(node) = element {
-                coords.insert(
-                    node.id(),
-                    NodeCoord {
-                        lat: node.lat(),
-                        lon: node.lon(),
-                    },
-                );
+                let _ = coords.insert(node.id(), deg_to_e7(node.lat()), deg_to_e7(node.lon()));
             } else if let Element::DenseNode(node) = element {
-                coords.insert(
-                    node.id(),
-                    NodeCoord {
-                        lat: node.lat(),
-                        lon: node.lon(),
-                    },
-                );
+                let _ = coords.insert(node.id(), deg_to_e7(node.lat()), deg_to_e7(node.lon()));
             }
         })
         .map_err(|e| CoreError::import(format!("PBF read failed: {e}")))?;
+    coords.finalize()?;
 
     let mut places = Vec::new();
     let reader = ElementReader::from_path(pbf_path)
@@ -127,9 +117,8 @@ fn extract_places(pbf_path: &Path) -> Result<Vec<Place>, CoreError> {
                     return;
                 }
                 let refs: Vec<i64> = way.refs().collect();
-                let (lat, lon) = match centroid(&refs, &coords) {
-                    Some(c) => c,
-                    None => return,
+                let Some((lat, lon)) = centroid(&refs, &coords) else {
+                    return;
                 };
                 if let Some(mut place) =
                     place_from_tags(OsmType::Way, way.id() as u64, lat, lon, &tags)
@@ -266,14 +255,14 @@ fn importance_for(category: &str, type_name: &str, has_name: bool) -> f32 {
     }
 }
 
-fn centroid(refs: &[i64], coords: &HashMap<i64, NodeCoord>) -> Option<(f64, f64)> {
+fn centroid(refs: &[i64], coords: &SparseNodeStore) -> Option<(f64, f64)> {
     let mut sum_lat = 0.0;
     let mut sum_lon = 0.0;
     let mut n = 0usize;
     for id in refs {
-        if let Some(c) = coords.get(id) {
-            sum_lat += c.lat;
-            sum_lon += c.lon;
+        if let Some((lat_e7, lon_e7)) = coords.get(*id) {
+            sum_lat += e7_to_deg(lat_e7);
+            sum_lon += e7_to_deg(lon_e7);
             n += 1;
         }
     }
@@ -288,23 +277,16 @@ fn centroid(refs: &[i64], coords: &HashMap<i64, NodeCoord>) -> Option<(f64, f64)
 pub fn import_places(places: Vec<Place>, data_dir: &Path) -> Result<Manifest, CoreError> {
     let paths = DataPaths::new(data_dir);
     paths.ensure_layout()?;
-    let mut writer = PlaceStoreWriter::new();
+    let mut normalized = Vec::with_capacity(places.len());
     for mut place in places {
         ensure_display_name(&mut place);
-        writer.push(place);
+        normalized.push(place);
     }
-    if writer.is_empty() {
+    if normalized.is_empty() {
         return Err(CoreError::import("no places to import"));
     }
-    writer.write_to(&paths.places())?;
-    text::build_index(writer.places(), &paths.text_dir())?;
-    spatial::build_index(writer.places(), &paths.spatial(), DEFAULT_H3_RESOLUTION)?;
-    let manifest = Manifest::new(
-        "memory://places",
-        "0",
-        writer.len() as u64,
-        DEFAULT_H3_RESOLUTION,
-    );
+    write_indexes(&normalized, &paths)?;
+    let manifest = Manifest::new("memory://places", "0", normalized.len() as u64);
     manifest.save(&paths.manifest())?;
     Ok(manifest)
 }

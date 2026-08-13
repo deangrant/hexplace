@@ -141,3 +141,29 @@ pub struct BatchResponse {
     /// Per-item results aligned with the request order.
     pub items: Vec<BatchResult>,
 }
+
+/// Bulk reverse request body (`POST /v1/reverse/bulk`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReverseBulkRequest {
+    /// Points to reverse as `[lat, lon]` pairs.
+    pub points: Vec<[f64; 2]>,
+}
+
+/// Compact reverse hit for bulk NDJSON/binary responses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReverseBulkHit {
+    /// Optional index into the request points array.
+    pub index: usize,
+    /// Winning place id when found.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub place_id: Option<u64>,
+    /// Ranking score when found.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f32>,
+    /// Display name when found.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Error when this point failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}

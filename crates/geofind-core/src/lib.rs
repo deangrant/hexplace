@@ -16,7 +16,8 @@ pub use error::CoreError;
 pub use place::{AddressParts, OsmType, Place, PlaceHit, PlaceId};
 #[doc(inline)]
 pub use query::{
-    BatchItem, BatchRequest, BatchResponse, BatchResult, GeoPoint, ReverseQuery, SearchQuery,
+    BatchItem, BatchRequest, BatchResponse, BatchResult, GeoPoint, ReverseBulkHit,
+    ReverseBulkRequest, ReverseQuery, SearchQuery,
 };
 #[doc(inline)]
 pub use traits::{Geocoder, PlaceStore, SpatialSearcher, TextSearcher};

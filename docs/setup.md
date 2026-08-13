@@ -28,13 +28,18 @@ After import the layout is:
 ```text
 data/
   manifest.json
-  places.bin
-  text/           # Tantivy segments
-  spatial/h3.bin  # H3 cell → place_id postings
+  places/
+    coords.bin      # i32 lat/lon e7
+    meta.bin        # osm type, importance, string offsets
+    strings.bin     # name / display / category / address
+  text/             # Tantivy segments
+  spatial/
+    fine/           # CSR H3 res 10
+    coarse/         # CSR H3 res 6 fallback
 ```
 
 `geofind serve` refuses to start if `manifest.json` is missing or the schema
-version is unsupported.
+version / format markers are unsupported.
 
 ## Environment variables
 
@@ -46,8 +51,7 @@ version is unsupported.
 
 ## Importing extracts
 
-Use regional extracts while developing. Full planet import is supported by the
-same pipeline but needs much more RAM, disk, and time.
+Use regional extracts while developing.
 
 ```bash
 geofind import --pbf path/to/region.osm.pbf --data-dir ./data
@@ -59,11 +63,9 @@ Rough guidance:
 | --- | --- | --- |
 | City / small country | 1–4 GiB | Comfortable on a laptop |
 | Large country | 8–32 GiB | SSD strongly recommended |
-| Planet | 64+ GiB | Plan for sharded indexes later |
 
-Import currently caches node coordinates in memory so way centroids can be
-computed. That is fine for regional extracts; planet-scale imports will need
-the partitioned scale-up path described in `architecture.md`.
+Import uses a sparse sorted node-id store for way centroids (scales with
+stored nodes, not the global OSM id range).
 
 ## Running as a service
 
@@ -87,4 +89,19 @@ JSONL input, one object per line:
 
 ```bash
 geofind batch --data-dir ./data --file queries.jsonl
+```
+
+## Bulk reverse HTTP
+
+```bash
+curl -s -H 'content-type: application/json' \
+  -H 'accept: application/x-ndjson' \
+  --data '{"points":[[43.7384,7.4246],[43.7310,7.4210]]}' \
+  http://127.0.0.1:8080/v1/reverse/bulk
+```
+
+## Reverse bench
+
+```bash
+geofind bench --data-dir ./data --lat 43.7384 --lon 7.4246 --count 10000
 ```

@@ -64,6 +64,16 @@ curl 'http://127.0.0.1:8080/v1/reverse?lat=43.7384&lon=7.4246&limit=1'
 curl -X POST 'http://127.0.0.1:8080/v1/batch' \
   -H 'content-type: application/json' \
   -d '{"items":[{"op":"geocode","q":"Monaco"},{"op":"reverse","lat":43.7384,"lon":7.4246}]}'
+curl -X POST 'http://127.0.0.1:8080/v1/reverse/bulk' \
+  -H 'content-type: application/json' \
+  -H 'accept: application/x-ndjson' \
+  -d '{"points":[[43.7384,7.4246],[43.7310,7.4210]]}'
+```
+
+### Reverse bench
+
+```bash
+geofind bench --data-dir ./data --lat 43.7384 --lon 7.4246 --count 10000
 ```
 
 ## Workspace layout

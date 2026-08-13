@@ -113,3 +113,30 @@ async fn geocode_and_reverse_and_batch() {
     let batch_json = body_json(batch).await;
     assert_eq!(batch_json["items"].as_array().unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn reverse_bulk_ndjson() {
+    let app = router(AppState::new(seed_engine()));
+    let body = serde_json::json!({
+        "points": [[43.7384, 7.4246], [43.7385, 7.4247]]
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/reverse/bulk")
+                .header("content-type", "application/json")
+                .header("accept", "application/x-ndjson")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    let lines: Vec<_> = text.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2);
+    let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert!(first.get("place_id").is_some() || first.get("error").is_some());
+}

@@ -9,6 +9,17 @@ pub trait PlaceStore {
     /// Returns one place by id.
     fn get(&self, id: PlaceId) -> Result<Place, CoreError>;
 
+    /// Returns WGS84 coordinates without hydrating string fields.
+    fn coord(&self, id: PlaceId) -> Result<(f64, f64), CoreError> {
+        let place = self.get(id)?;
+        Ok((place.lat, place.lon))
+    }
+
+    /// Returns importance without hydrating string fields.
+    fn importance(&self, id: PlaceId) -> Result<f32, CoreError> {
+        Ok(self.get(id)?.importance)
+    }
+
     /// Returns many places; missing ids become errors.
     fn get_many(&self, ids: &[PlaceId]) -> Result<Vec<Place>, CoreError> {
         ids.iter().map(|id| self.get(*id)).collect()
