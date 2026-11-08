@@ -17,14 +17,16 @@ inventing project conventions.
 - [`.agents/rules/`](.agents/rules/) (symlinked from [`.cursor/rules`](.cursor/rules))
 - [`.agents/rules/hexplace-project.mdc`](.agents/rules/hexplace-project.mdc) —
   always-on out-of-scope limits and skill routing
-- [`.agents/rules/rust-style.mdc`](.agents/rules/rust-style.mdc) — 100-col /
-  500-line caps and Rust style constraints
+- [`.agents/rules/rust-coding-standard.mdc`](.agents/rules/rust-coding-standard.mdc) —
+  load `rust-coding-standard` before any `*.rs` edit
 - [`.agents/rules/crate-boundaries.mdc`](.agents/rules/crate-boundaries.mdc) —
   core → engine → HTTP ownership and dependency direction
 
 ## Skills
 
 - [`.agents/skills/`](.agents/skills/) — canonical skill directory (no `.cursor` copy)
+- [`.agents/skills/rust-coding-standard/`](.agents/skills/rust-coding-standard/) —
+  Rust style, SOLID design, idioms (100-col / 500-line caps)
 - [`.agents/skills/hexplace-architecture/`](.agents/skills/hexplace-architecture/) —
   crates, indexes, query paths, out of scope
 - [`.agents/skills/hexplace-import/`](.agents/skills/hexplace-import/) — PBF

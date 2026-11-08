@@ -21,6 +21,7 @@ hooks.
 
 ## When unsure
 
+- Writing or changing Rust → skill `rust-coding-standard`
 - Architecture / “where does X live” → skill `hexplace-architecture`
 - Import, PBF, indexes, schema bumps → skill `hexplace-import`
 - Before claiming done on Rust work → skill `hexplace-verify` or command `/verify`

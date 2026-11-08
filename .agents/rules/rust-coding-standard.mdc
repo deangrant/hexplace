@@ -1,0 +1,23 @@
+---
+description: Follow the rust-coding-standard skill for every Rust edit.
+globs: "**/*.rs"
+alwaysApply: false
+---
+
+# Rust Coding Standard
+
+Read
+[`.agents/skills/rust-coding-standard/SKILL.md`](../../.agents/skills/rust-coding-standard/SKILL.md)
+before you write or change any Rust code in this repository, and follow it.
+
+The skill covers portable Rust practice:
+
+- Style: formatting, file size, comments, documentation, and naming.
+- Design: the five SOLID principles (single responsibility, open/closed,
+  Liskov substitution, interface segregation, dependency inversion) applied to
+  traits, modules, and dependency direction.
+- Idioms and robustness: ownership, error handling, process exit codes, async,
+  and tests.
+
+Honor existing `rustfmt.toml` / lint config when present. Do not edit those
+files to make code pass.

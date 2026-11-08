@@ -37,7 +37,6 @@ cargo audit
 
 ## Style reminders while fixing
 
-- Line width 100; avoid growing `.rs` files past ~500 lines
-- Prefer `#[expect]` over `#[allow]`
-- Follow [`.agents/rules/rust-style.mdc`](../../rules/rust-style.mdc) and
-  [`.agents/rules/crate-boundaries.mdc`](../../rules/crate-boundaries.mdc)
+- Follow [`.agents/skills/rust-coding-standard/SKILL.md`](../rust-coding-standard/SKILL.md)
+  (triggered by [`.agents/rules/rust-coding-standard.mdc`](../../rules/rust-coding-standard.mdc))
+- Follow [`.agents/rules/crate-boundaries.mdc`](../../rules/crate-boundaries.mdc)
