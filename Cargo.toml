@@ -77,7 +77,7 @@ sha2 = "0.11"
 tantivy = "0.27"
 thiserror = "2"
 tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "fs", "io-util"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "fs", "io-util", "sync"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = ["trace", "timeout"] }
 tracing = "0.1"

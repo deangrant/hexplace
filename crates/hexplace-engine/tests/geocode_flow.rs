@@ -300,6 +300,32 @@ fn batch_rejects_empty_items() -> TestResult {
 }
 
 #[test]
+fn reverse_bulk_with_cancel_stops_when_flag_set() -> TestResult {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let dir = tempfile::tempdir()?;
+    import_places(sample_places(), dir.path())?;
+    let engine = Engine::open(EngineConfig::new(dir.path()))?;
+    let cancel = AtomicBool::new(true);
+    let points = vec![[48.8606, 2.3376]; 32];
+    let Err(err) = engine.reverse_bulk_with_cancel(&points, Some(&cancel)) else {
+        return Err("pre-set cancel must reject the bulk".into());
+    };
+    assert!(
+        err.to_string().contains("cancelled"),
+        "cancel error must mention cancellation: {err}"
+    );
+    cancel.store(false, Ordering::SeqCst);
+    let hits = engine.reverse_bulk_with_cancel(&points, Some(&cancel))?;
+    assert_eq!(
+        hits.len(),
+        32,
+        "uncancelled bulk must return one hit slot per point"
+    );
+    Ok(())
+}
+
+#[test]
 fn batch_rejects_over_max_items() -> TestResult {
     let dir = tempfile::tempdir()?;
     import_places(sample_places(), dir.path())?;

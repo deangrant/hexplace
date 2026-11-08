@@ -2,6 +2,7 @@
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use hexplace_core::{
@@ -105,8 +106,22 @@ impl Engine {
     /// # Errors
     ///
     /// Returns an invalid-input error when `points` is empty or exceeds
-    /// [`Self::MAX_BATCH_ITEMS`].
+    /// [`Self::MAX_BATCH_ITEMS`], or when `cancel` is set during work.
     pub fn reverse_bulk(&self, points: &[[f64; 2]]) -> Result<Vec<ReverseBulkHit>, CoreError> {
+        self.reverse_bulk_with_cancel(points, None)
+    }
+
+    /// Like [`Self::reverse_bulk`], stopping early when `cancel` becomes true.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-input error when `points` is empty or exceeds
+    /// [`Self::MAX_BATCH_ITEMS`], or when cancellation is observed.
+    pub fn reverse_bulk_with_cancel(
+        &self,
+        points: &[[f64; 2]],
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Vec<ReverseBulkHit>, CoreError> {
         if points.is_empty() {
             return Err(CoreError::invalid("points must not be empty"));
         }
@@ -116,10 +131,12 @@ impl Engine {
                 Self::MAX_BATCH_ITEMS
             )));
         }
+        check_cancel(cancel)?;
 
         let workers = worker_count(points.len());
         let chunk_size = points.len().div_ceil(workers);
         let mut slots: Vec<Option<ReverseBulkHit>> = (0..points.len()).map(|_| None).collect();
+        let mut cancelled = false;
 
         std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(workers);
@@ -129,26 +146,32 @@ impl Engine {
                 handles.push((
                     start..end,
                     scope.spawn(move || {
-                        chunk
-                            .iter()
-                            .enumerate()
-                            .map(|(offset, point)| {
-                                let index = start + offset;
-                                let [lat, lon] = *point;
-                                (index, reverse_one_bulk_hit(self, index, lat, lon))
-                            })
-                            .collect::<Vec<_>>()
+                        let mut local = Vec::with_capacity(chunk.len());
+                        for (offset, point) in chunk.iter().enumerate() {
+                            if is_cancelled(cancel) {
+                                return Err(());
+                            }
+                            let index = start + offset;
+                            let [lat, lon] = *point;
+                            local.push((index, reverse_one_bulk_hit(self, index, lat, lon)));
+                        }
+                        Ok(local)
                     }),
                 ));
             }
-            fill_slots_from_joins(&mut slots, handles, |idx| ReverseBulkHit {
-                index: idx,
-                place_id: None,
-                score: None,
-                display_name: None,
-                error: Some("bulk worker panicked".into()),
-            });
+            cancelled =
+                fill_slots_from_cancelable_joins(&mut slots, handles, |idx| ReverseBulkHit {
+                    index: idx,
+                    place_id: None,
+                    score: None,
+                    display_name: None,
+                    error: Some("bulk worker panicked".into()),
+                });
         });
+
+        if cancelled {
+            return Err(CoreError::invalid("request cancelled"));
+        }
 
         Ok(slots
             .into_iter()
@@ -232,6 +255,22 @@ impl Geocoder for Engine {
     }
 
     fn batch(&self, request: &BatchRequest) -> Result<BatchResponse, CoreError> {
+        self.batch_with_cancel(request, None)
+    }
+}
+
+impl Engine {
+    /// Like [`Geocoder::batch`], stopping early when `cancel` becomes true.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-input error when the batch is empty or oversized, or
+    /// when cancellation is observed.
+    pub fn batch_with_cancel(
+        &self,
+        request: &BatchRequest,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<BatchResponse, CoreError> {
         if request.items.is_empty() {
             return Err(CoreError::invalid("batch items must not be empty"));
         }
@@ -241,10 +280,12 @@ impl Geocoder for Engine {
                 Self::MAX_BATCH_ITEMS
             )));
         }
+        check_cancel(cancel)?;
 
         let workers = worker_count(request.items.len());
         let chunk_size = request.items.len().div_ceil(workers);
         let mut slots: Vec<Option<BatchResult>> = (0..request.items.len()).map(|_| None).collect();
+        let mut cancelled = false;
 
         std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(workers);
@@ -254,15 +295,18 @@ impl Geocoder for Engine {
                 handles.push((
                     start..end,
                     scope.spawn(move || {
-                        chunk
-                            .iter()
-                            .enumerate()
-                            .map(|(offset, item)| (start + offset, self.process_item(item)))
-                            .collect::<Vec<_>>()
+                        let mut local = Vec::with_capacity(chunk.len());
+                        for (offset, item) in chunk.iter().enumerate() {
+                            if is_cancelled(cancel) {
+                                return Err(());
+                            }
+                            local.push((start + offset, self.process_item(item)));
+                        }
+                        Ok(local)
                     }),
                 ));
             }
-            fill_slots_from_joins(&mut slots, handles, |idx| {
+            cancelled = fill_slots_from_cancelable_joins(&mut slots, handles, |idx| {
                 request.items.get(idx).map_or_else(
                     || BatchResult {
                         id: None,
@@ -273,6 +317,10 @@ impl Geocoder for Engine {
                 )
             });
         });
+
+        if cancelled {
+            return Err(CoreError::invalid("request cancelled"));
+        }
 
         let items = slots
             .into_iter()
@@ -301,23 +349,32 @@ fn worker_count(len: usize) -> usize {
         .max(1)
 }
 
-type JoinHandles<'scope, T> = Vec<(
+type CancelableJoinHandles<'scope, T> = Vec<(
     std::ops::Range<usize>,
-    std::thread::ScopedJoinHandle<'scope, Vec<(usize, T)>>,
+    std::thread::ScopedJoinHandle<'scope, Result<Vec<(usize, T)>, ()>>,
 )>;
 
-fn fill_slots_from_joins<T, F>(slots: &mut [Option<T>], handles: JoinHandles<'_, T>, panic_value: F)
+/// Fills `slots` from worker joins. Returns `true` when any worker observed cancel.
+fn fill_slots_from_cancelable_joins<T, F>(
+    slots: &mut [Option<T>],
+    handles: CancelableJoinHandles<'_, T>,
+    panic_value: F,
+) -> bool
 where
     F: Fn(usize) -> T,
 {
+    let mut cancelled = false;
     for (range, handle) in handles {
         match handle.join() {
-            Ok(local) => {
+            Ok(Ok(local)) => {
                 for (idx, value) in local {
                     if let Some(slot) = slots.get_mut(idx) {
                         *slot = Some(value);
                     }
                 }
+            }
+            Ok(Err(())) => {
+                cancelled = true;
             }
             Err(_) => {
                 for idx in range {
@@ -328,6 +385,18 @@ where
             }
         }
     }
+    cancelled
+}
+
+fn is_cancelled(cancel: Option<&AtomicBool>) -> bool {
+    cancel.is_some_and(|flag| flag.load(Ordering::Relaxed))
+}
+
+fn check_cancel(cancel: Option<&AtomicBool>) -> Result<(), CoreError> {
+    if is_cancelled(cancel) {
+        return Err(CoreError::invalid("request cancelled"));
+    }
+    Ok(())
 }
 
 fn reverse_one_bulk_hit(engine: &Engine, index: usize, lat: f64, lon: f64) -> ReverseBulkHit {

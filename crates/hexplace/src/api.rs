@@ -3,6 +3,7 @@
 use std::fmt;
 use std::future::Future;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,23 +14,30 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use hexplace_core::{
-    BatchRequest, BatchResponse, CoreError, Geocoder, PlaceHit, ReverseBulkHit, ReverseBulkRequest,
-    ReverseQuery, SearchQuery,
+    BatchResponse, CoreError, Geocoder, PlaceHit, ReverseBulkHit, ReverseQuery, SearchQuery,
 };
 use hexplace_engine::Engine;
 use serde::{Deserialize, Serialize};
+use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
+
+use crate::bulk_json::{parse_capped_batch_request, parse_capped_reverse_bulk_points};
 
 /// Shared application state.
 #[derive(Clone)]
 pub struct AppState {
     engine: Arc<Engine>,
+    /// Limits concurrent batch/bulk `spawn_blocking` jobs.
+    bulk_jobs: Arc<Semaphore>,
 }
 
 impl fmt::Debug for AppState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AppState").field("engine", &"Engine").finish()
+        f.debug_struct("AppState")
+            .field("engine", &"Engine")
+            .field("bulk_jobs", &"Semaphore")
+            .finish()
     }
 }
 
@@ -39,6 +47,7 @@ impl AppState {
     pub fn new(engine: Engine) -> Self {
         Self {
             engine: Arc::new(engine),
+            bulk_jobs: Arc::new(Semaphore::new(MAX_IN_FLIGHT_BULK_JOBS)),
         }
     }
 }
@@ -51,6 +60,8 @@ const BINARY_BULK_HIT_BYTES: usize = 13;
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Request timeout for large batch jobs.
 const BATCH_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+/// Concurrent batch/bulk blocking jobs accepted by one serve process.
+const MAX_IN_FLIGHT_BULK_JOBS: usize = 2;
 
 /// Builds the `/v1` router.
 pub fn router(state: AppState) -> Router {
@@ -204,14 +215,21 @@ async fn reverse(
     Ok(Json(hits))
 }
 
-async fn batch(
-    State(state): State<AppState>,
-    Json(body): Json<BatchRequest>,
-) -> Result<Json<BatchResponse>, ApiError> {
-    let engine = Arc::clone(&state.engine);
-    let response = tokio::task::spawn_blocking(move || engine.batch(&body))
+async fn batch(State(state): State<AppState>, body: Body) -> Result<Json<BatchResponse>, ApiError> {
+    let bytes = axum::body::to_bytes(body, BATCH_BODY_LIMIT_BYTES)
         .await
-        .map_err(|e| CoreError::io(format!("batch worker failed: {e}")))??;
+        .map_err(|e| CoreError::invalid(format!("failed to read body: {e}")))?;
+    let request = parse_capped_batch_request(&bytes, Engine::MAX_BATCH_ITEMS)?;
+
+    let _permit = acquire_bulk_permit(&state).await?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let _cancel_guard = CancelOnDrop(Arc::clone(&cancel));
+    let engine = Arc::clone(&state.engine);
+    let response = tokio::task::spawn_blocking(move || {
+        engine.batch_with_cancel(&request, Some(cancel.as_ref()))
+    })
+    .await
+    .map_err(|e| CoreError::io(format!("batch worker failed: {e}")))??;
     Ok(Json(response))
 }
 
@@ -228,16 +246,36 @@ async fn reverse_bulk(
         .map_err(|e| CoreError::invalid(format!("failed to read body: {e}")))?;
 
     let points = parse_bulk_points(content_type, &bytes)?;
+    let _permit = acquire_bulk_permit(&state).await?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let _cancel_guard = CancelOnDrop(Arc::clone(&cancel));
     let engine = Arc::clone(&state.engine);
-    let hits = tokio::task::spawn_blocking(move || engine.reverse_bulk(&points))
-        .await
-        .map_err(|e| CoreError::io(format!("bulk worker failed: {e}")))??;
+    let hits = tokio::task::spawn_blocking(move || {
+        engine.reverse_bulk_with_cancel(&points, Some(cancel.as_ref()))
+    })
+    .await
+    .map_err(|e| CoreError::io(format!("bulk worker failed: {e}")))??;
 
     if accept.contains("octet-stream") {
         Ok(binary_bulk_response(&hits))
     } else {
         Ok(ndjson_bulk_response(&hits)?)
     }
+}
+
+/// Sets the cancel flag when the HTTP future is dropped (timeout/disconnect).
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+async fn acquire_bulk_permit(state: &AppState) -> Result<OwnedSemaphorePermit, ApiError> {
+    Arc::clone(&state.bulk_jobs).acquire_owned().await.map_err(|_: AcquireError| {
+        ApiError(CoreError::io("bulk job semaphore closed unexpectedly"))
+    })
 }
 
 /// Reads a header as UTF-8 text, or `default` when missing or invalid.
@@ -254,9 +292,7 @@ fn parse_bulk_points(content_type: &str, bytes: &[u8]) -> Result<Vec<[f64; 2]>, 
     if content_type.contains("octet-stream") {
         parse_binary_points(bytes)
     } else {
-        let req: ReverseBulkRequest = serde_json::from_slice(bytes)
-            .map_err(|e| CoreError::invalid(format!("invalid bulk JSON: {e}")))?;
-        Ok(req.points)
+        parse_capped_reverse_bulk_points(bytes, Engine::MAX_BATCH_ITEMS)
     }
 }
 
