@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 description = "Domain types and traits for the Hexplace geocoding engine."
 rust-version.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 serde = { workspace = true }

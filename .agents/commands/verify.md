@@ -4,7 +4,7 @@ Run Hexplace CI-parity checks using skill `.agents/skills/hexplace-verify`.
 
 From the repository root:
 
-1. `cargo fmt --all -- --check`
+1. `cargo +nightly fmt --all -- --check`
 2. `cargo clippy --workspace --all-targets -- -D warnings`
 3. `cargo test --workspace`
 

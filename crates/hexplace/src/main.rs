@@ -1,11 +1,10 @@
 //! Hexplace command-line entry point.
 
-#![forbid(unsafe_code)]
-
 use std::process::ExitCode;
 
 use clap::Parser;
 use hexplace::cli::{Cli, Command};
+use hexplace::exit::exit_code_for;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> ExitCode {
@@ -16,7 +15,7 @@ fn main() -> ExitCode {
         .init();
 
     let cli = Cli::parse();
-    let result = match cli.command {
+    let result = match &cli.command {
         Command::Import(args) => hexplace::cli::run_import(args),
         Command::Serve(args) => hexplace::cli::run_serve(args),
         Command::Search(args) => hexplace::cli::run_search(args),
@@ -36,7 +35,7 @@ fn main() -> ExitCode {
             {
                 eprintln!("error: {err}");
             }
-            ExitCode::FAILURE
+            exit_code_for(&err)
         }
     }
 }

@@ -8,21 +8,23 @@ use std::path::Path;
 
 use hexplace_core::{CoreError, OsmType, Place};
 use osmpbf::{Element, ElementReader};
+pub use publish::acquire_shared_lock;
 use tracing::info;
-
-use crate::display::ensure_display_name;
-use crate::manifest::{hash_file, DataPaths, Manifest};
-use crate::spatial;
-use crate::store::PlaceStoreWriter;
-use crate::text;
 
 use self::node_store::{deg_to_e7, e7_to_deg, NodeStore, SparseNodeStore};
 use self::osm_place::{has_searchable_name, is_named_highway, place_from_tags};
 use self::publish::{cleanup_orphans, create_staging_dir, discard_staging, publish_data_dir};
-
-pub use publish::acquire_shared_lock;
+use crate::display::ensure_display_name;
+use crate::manifest::{hash_file, DataPaths, Manifest};
+use crate::store::PlaceStoreWriter;
+use crate::{spatial, text};
 
 /// Imports an OSM PBF file into a Hexplace data directory.
+///
+/// # Errors
+///
+/// Returns an import, index, or I/O error when the PBF cannot be read, no
+/// searchable places are found, or staging/publish fails.
 pub fn import_pbf(pbf_path: &Path, data_dir: &Path) -> Result<Manifest, CoreError> {
     cleanup_orphans(data_dir)?;
 
@@ -37,17 +39,20 @@ pub fn import_pbf(pbf_path: &Path, data_dir: &Path) -> Result<Manifest, CoreErro
     }
 
     let source_hash = hash_file(pbf_path)?;
-    let manifest = Manifest::new(
-        pbf_path.display().to_string(),
-        source_hash,
-        extracted.len() as u64,
-    );
+    let place_count =
+        u64::try_from(extracted.len()).map_err(|_| CoreError::import("place count exceeds u64"))?;
+    let manifest = Manifest::new(pbf_path.display().to_string(), source_hash, place_count);
     finish_import(extracted, &manifest, data_dir)?;
     info!(places = manifest.place_count, "import complete");
     Ok(manifest)
 }
 
 /// Builds a data directory from an in-memory place list (tests and fixtures).
+///
+/// # Errors
+///
+/// Returns an import, index, or I/O error when `places` is empty or staging
+/// publish fails.
 pub fn import_places(places: Vec<Place>, data_dir: &Path) -> Result<Manifest, CoreError> {
     cleanup_orphans(data_dir)?;
     let mut normalized = Vec::with_capacity(places.len());
@@ -58,7 +63,9 @@ pub fn import_places(places: Vec<Place>, data_dir: &Path) -> Result<Manifest, Co
     if normalized.is_empty() {
         return Err(CoreError::import("no places to import"));
     }
-    let manifest = Manifest::new("memory://places", "0", normalized.len() as u64);
+    let place_count = u64::try_from(normalized.len())
+        .map_err(|_| CoreError::import("place count exceeds u64"))?;
+    let manifest = Manifest::new("memory://places", "0", place_count);
     finish_import(normalized, &manifest, data_dir)?;
     Ok(manifest)
 }
@@ -115,10 +122,13 @@ fn extract_places(pbf_path: &Path) -> Result<Vec<Place>, CoreError> {
         .for_each(|element| match element {
             Element::Node(node) => {
                 let tags = collect_tags(node.tags());
+                let Some(osm_id) = u64::try_from(node.id()).ok() else {
+                    return;
+                };
                 push_from_node_tags(
                     &mut places,
                     OsmType::Node,
-                    node.id() as u64,
+                    osm_id,
                     node.lat(),
                     node.lon(),
                     &tags,
@@ -126,10 +136,13 @@ fn extract_places(pbf_path: &Path) -> Result<Vec<Place>, CoreError> {
             }
             Element::DenseNode(node) => {
                 let tags = collect_tags(node.tags());
+                let Some(osm_id) = u64::try_from(node.id()).ok() else {
+                    return;
+                };
                 push_from_node_tags(
                     &mut places,
                     OsmType::Node,
-                    node.id() as u64,
+                    osm_id,
                     node.lat(),
                     node.lon(),
                     &tags,
@@ -144,7 +157,10 @@ fn extract_places(pbf_path: &Path) -> Result<Vec<Place>, CoreError> {
                 let Some((lat, lon)) = centroid(&refs, &coords) else {
                     return;
                 };
-                push_from_node_tags(&mut places, OsmType::Way, way.id() as u64, lat, lon, &tags);
+                let Some(osm_id) = u64::try_from(way.id()).ok() else {
+                    return;
+                };
+                push_from_node_tags(&mut places, OsmType::Way, osm_id, lat, lon, &tags);
             }
             Element::Relation(_) => {
                 // Relations (admin boundaries, multipolygon POIs) are not imported.
@@ -188,6 +204,11 @@ fn centroid(refs: &[i64], coords: &SparseNodeStore) -> Option<(f64, f64)> {
     if n == 0 {
         None
     } else {
-        Some((sum_lat / n as f64, sum_lon / n as f64))
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "centroid divisor is a node count within a single OSM way"
+        )]
+        let n_f64 = n as f64;
+        Some((sum_lat / n_f64, sum_lon / n_f64))
     }
 }

@@ -26,14 +26,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
+      - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
-          components: rustfmt, clippy
+          components: clippy
+
+      - name: Install nightly rustfmt
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: nightly
+          components: rustfmt
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: cargo +nightly fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo +stable clippy --workspace --all-targets -- -D warnings

@@ -3,7 +3,7 @@
 use std::fs;
 use std::io::{self, BufRead, ErrorKind, Write};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use hexplace_core::{BatchItem, BatchRequest, CoreError, Geocoder, ReverseQuery, SearchQuery};
@@ -16,6 +16,7 @@ use crate::api;
 #[derive(Debug, Parser)]
 #[command(name = "hexplace", version, about)]
 pub struct Cli {
+    /// Subcommand to run.
     #[command(subcommand)]
     pub command: Command,
 }
@@ -117,12 +118,16 @@ pub struct BenchArgs {
     pub count: usize,
 }
 
-/// Runs PBF import.
+/// Runs PBF import and prints a one-line summary.
+///
+/// # Errors
+///
+/// Returns import or I/O failures from the engine.
 #[expect(
     clippy::print_stdout,
     reason = "CLI import progress is intentionally written to stdout"
 )]
-pub fn run_import(args: ImportArgs) -> Result<(), CoreError> {
+pub fn run_import(args: &ImportArgs) -> Result<(), CoreError> {
     let manifest = import_pbf(&args.pbf, &args.data_dir)?;
     println!(
         "imported {} places into {}",
@@ -132,23 +137,35 @@ pub fn run_import(args: ImportArgs) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Serves the HTTP API.
-pub fn run_serve(args: ServeArgs) -> Result<(), CoreError> {
+/// Serves the HTTP API until shutdown.
+///
+/// # Errors
+///
+/// Returns engine open, runtime, bind, signal-install, or server failures.
+pub fn run_serve(args: &ServeArgs) -> Result<(), CoreError> {
     let engine = Engine::open(EngineConfig::new(&args.data_dir))?;
     let rt = Runtime::new().map_err(|e| CoreError::io(e.to_string()))?;
     rt.block_on(api::serve(engine, args.bind))
 }
 
 /// Runs a forward search and prints JSON.
-pub fn run_search(args: SearchArgs) -> Result<(), CoreError> {
+///
+/// # Errors
+///
+/// Returns engine open, query validation, search, or stdout write failures.
+pub fn run_search(args: &SearchArgs) -> Result<(), CoreError> {
     let engine = Engine::open(EngineConfig::new(&args.data_dir))?;
-    let query = SearchQuery::new(args.query, Some(args.limit))?;
+    let query = SearchQuery::new(args.query.clone(), Some(args.limit))?;
     let hits = engine.geocode(&query)?;
     write_json(&hits)
 }
 
 /// Runs a reverse lookup and prints JSON.
-pub fn run_reverse(args: ReverseArgs) -> Result<(), CoreError> {
+///
+/// # Errors
+///
+/// Returns engine open, query validation, reverse, or stdout write failures.
+pub fn run_reverse(args: &ReverseArgs) -> Result<(), CoreError> {
     let engine = Engine::open(EngineConfig::new(&args.data_dir))?;
     let query = ReverseQuery::new(args.lat, args.lon, Some(args.limit))?;
     let hits = engine.reverse(&query)?;
@@ -156,7 +173,11 @@ pub fn run_reverse(args: ReverseArgs) -> Result<(), CoreError> {
 }
 
 /// Runs a JSONL batch and prints a JSON response.
-pub fn run_batch(args: BatchArgs) -> Result<(), CoreError> {
+///
+/// # Errors
+///
+/// Returns engine open, batch parse/validation, batch, or stdout write failures.
+pub fn run_batch(args: &BatchArgs) -> Result<(), CoreError> {
     let engine = Engine::open(EngineConfig::new(&args.data_dir))?;
     let items = read_batch_items(&args.file)?;
     let response = engine.batch(&BatchRequest { items })?;
@@ -164,11 +185,15 @@ pub fn run_batch(args: BatchArgs) -> Result<(), CoreError> {
 }
 
 /// Times reverse lookups and prints a summary.
+///
+/// # Errors
+///
+/// Returns engine open or bench timing failures.
 #[expect(
     clippy::print_stdout,
     reason = "CLI bench summary is intentionally written to stdout"
 )]
-pub fn run_bench(args: BenchArgs) -> Result<(), CoreError> {
+pub fn run_bench(args: &BenchArgs) -> Result<(), CoreError> {
     let engine = Engine::open(EngineConfig::new(&args.data_dir))?;
     let report = bench_reverse(&engine, args.lat, args.lon, args.count)?;
     println!(
@@ -178,7 +203,12 @@ pub fn run_bench(args: BenchArgs) -> Result<(), CoreError> {
     Ok(())
 }
 
-fn read_batch_items(path: &PathBuf) -> Result<Vec<BatchItem>, CoreError> {
+/// Parses JSONL batch items from `path`, or stdin when `path` is `-`.
+///
+/// # Errors
+///
+/// Returns I/O failures, JSON parse errors, or an empty-batch validation error.
+fn read_batch_items(path: &Path) -> Result<Vec<BatchItem>, CoreError> {
     let reader: Box<dyn BufRead> = if path.as_os_str() == "-" {
         Box::new(io::BufReader::new(io::stdin()))
     } else {
@@ -202,6 +232,10 @@ fn read_batch_items(path: &PathBuf) -> Result<Vec<BatchItem>, CoreError> {
 }
 
 /// Writes JSON to stdout; ignores broken pipes from downstream pagers.
+///
+/// # Errors
+///
+/// Returns I/O failures other than a broken pipe on stdout.
 fn write_json(value: &impl serde::Serialize) -> Result<(), CoreError> {
     let mut out = io::stdout().lock();
     match serde_json::to_writer_pretty(&mut out, value) {

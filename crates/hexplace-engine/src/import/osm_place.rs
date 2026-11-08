@@ -72,10 +72,7 @@ pub(super) fn place_from_tags(
         return None;
     }
 
-    let name = map
-        .get("name")
-        .or_else(|| map.get("name:en"))
-        .map(|s| (*s).to_owned());
+    let name = map.get("name").or_else(|| map.get("name:en")).map(|s| (*s).to_owned());
 
     let address = address_from_tags(&map);
     let (category, type_name) = classify(&map);
@@ -134,19 +131,22 @@ fn importance_for(category: &str, type_name: &str, has_name: bool) -> f32 {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Result tests assert contracts after fallible setup via ?"
+)]
 mod tests {
     use super::*;
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     fn tags(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-            .collect()
+        pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
     }
 
     #[test]
-    fn country_code_prefers_iso3166_alpha2() {
-        let place = place_from_tags(
+    fn country_code_prefers_iso3166_alpha2() -> TestResult {
+        let Some(place) = place_from_tags(
             OsmType::Node,
             1,
             0.0,
@@ -157,24 +157,44 @@ mod tests {
                 ("addr:country", "Germany"),
                 ("ISO3166-1:alpha2", "DE"),
             ]),
-        )
-        .unwrap();
-        assert_eq!(place.address.country.as_deref(), Some("Germany"));
-        assert_eq!(place.address.country_code.as_deref(), Some("de"));
+        ) else {
+            return Err("named city with ISO3166 code must import".into());
+        };
+        assert_eq!(
+            place.address.country.as_deref(),
+            Some("Germany"),
+            "addr:country text must be preserved beside the ISO code"
+        );
+        assert_eq!(
+            place.address.country_code.as_deref(),
+            Some("de"),
+            "ISO3166-1:alpha2 must win over a non-ISO addr:country"
+        );
+        Ok(())
     }
 
     #[test]
-    fn country_code_from_two_letter_addr_country() {
-        let place = place_from_tags(
+    fn country_code_from_two_letter_addr_country() -> TestResult {
+        let Some(place) = place_from_tags(
             OsmType::Node,
             2,
             0.0,
             0.0,
             &tags(&[("name", "Paris"), ("place", "city"), ("addr:country", "fr")]),
-        )
-        .unwrap();
-        assert_eq!(place.address.country.as_deref(), Some("fr"));
-        assert_eq!(place.address.country_code.as_deref(), Some("fr"));
+        ) else {
+            return Err("named city with two-letter addr:country must import".into());
+        };
+        assert_eq!(
+            place.address.country.as_deref(),
+            Some("fr"),
+            "two-letter addr:country must remain in the country field"
+        );
+        assert_eq!(
+            place.address.country_code.as_deref(),
+            Some("fr"),
+            "two-letter addr:country must also populate country_code"
+        );
+        Ok(())
     }
 
     #[test]
@@ -186,12 +206,18 @@ mod tests {
             0.0,
             &tags(&[("name", "Cafe"), ("amenity", "cafe")]),
         );
-        assert!(place.is_some());
+        assert!(
+            place.is_some(),
+            "named amenities must be retained as searchable places"
+        );
     }
 
     #[test]
     fn unnamed_amenity_without_address_is_dropped() {
         let place = place_from_tags(OsmType::Node, 4, 0.0, 0.0, &tags(&[("amenity", "cafe")]));
-        assert!(place.is_none());
+        assert!(
+            place.is_none(),
+            "unnamed amenities without an address must be dropped"
+        );
     }
 }

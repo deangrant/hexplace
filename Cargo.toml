@@ -11,6 +11,56 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.81"
+repository = "https://github.com/deangrant/hexplace"
+readme = "README.md"
+keywords = ["geocoding", "openstreetmap", "h3", "osm"]
+categories = ["science::geo", "parsing"]
+
+[workspace.lints.rust]
+# `deny` (not `forbid`): hexplace-engine needs `unsafe` for memmap2.
+unsafe_code = "deny"
+non_ascii_idents = "forbid"
+warnings = "deny"
+dead_code = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+nonstandard_style = { level = "deny", priority = -1 }
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unfulfilled_lint_expectations = "deny"
+
+[workspace.lints.rustdoc]
+all = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+await_holding_lock = "deny"
+large_futures = "deny"
+exit = "deny"
+mem_forget = "deny"
+large_stack_arrays = "deny"
+large_types_passed_by_value = "deny"
+missing_assert_message = "deny"
+clone_on_ref_ptr = "deny"
+rc_buffer = "deny"
+rc_mutex = "deny"
+unwrap_in_result = "deny"
+multiple_crate_versions = "allow"
 
 [workspace.dependencies]
 hexplace-core = { path = "crates/hexplace-core" }

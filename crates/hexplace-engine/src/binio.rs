@@ -7,7 +7,11 @@ use hexplace_core::CoreError;
 use memmap2::Mmap;
 
 /// Reads a little-endian `u32` at `off`, or returns a storage error.
-pub(crate) fn u32_le(buf: &[u8], off: usize) -> Result<u32, CoreError> {
+///
+/// # Errors
+///
+/// Returns a storage error when `buf` is too short for a `u32` at `off`.
+pub fn u32_le(buf: &[u8], off: usize) -> Result<u32, CoreError> {
     let bytes: [u8; 4] = buf
         .get(off..off + 4)
         .and_then(|s| s.try_into().ok())
@@ -16,7 +20,11 @@ pub(crate) fn u32_le(buf: &[u8], off: usize) -> Result<u32, CoreError> {
 }
 
 /// Reads a little-endian `u64` at `off`, or returns a storage error.
-pub(crate) fn u64_le(buf: &[u8], off: usize) -> Result<u64, CoreError> {
+///
+/// # Errors
+///
+/// Returns a storage error when `buf` is too short for a `u64` at `off`.
+pub fn u64_le(buf: &[u8], off: usize) -> Result<u64, CoreError> {
     let bytes: [u8; 8] = buf
         .get(off..off + 8)
         .and_then(|s| s.try_into().ok())
@@ -25,7 +33,11 @@ pub(crate) fn u64_le(buf: &[u8], off: usize) -> Result<u64, CoreError> {
 }
 
 /// Reads a little-endian `i32` at `off`, or returns a storage error.
-pub(crate) fn i32_le(buf: &[u8], off: usize) -> Result<i32, CoreError> {
+///
+/// # Errors
+///
+/// Returns a storage error when `buf` is too short for an `i32` at `off`.
+pub fn i32_le(buf: &[u8], off: usize) -> Result<i32, CoreError> {
     let bytes: [u8; 4] = buf
         .get(off..off + 4)
         .and_then(|s| s.try_into().ok())
@@ -34,7 +46,11 @@ pub(crate) fn i32_le(buf: &[u8], off: usize) -> Result<i32, CoreError> {
 }
 
 /// Reads a little-endian `f32` at `off`, or returns a storage error.
-pub(crate) fn f32_le(buf: &[u8], off: usize) -> Result<f32, CoreError> {
+///
+/// # Errors
+///
+/// Returns a storage error when `buf` is too short for an `f32` at `off`.
+pub fn f32_le(buf: &[u8], off: usize) -> Result<f32, CoreError> {
     let bytes: [u8; 4] = buf
         .get(off..off + 4)
         .and_then(|s| s.try_into().ok())
@@ -43,46 +59,46 @@ pub(crate) fn f32_le(buf: &[u8], off: usize) -> Result<f32, CoreError> {
 }
 
 /// Optional little-endian `u32` (hot paths that skip on corruption).
-pub(crate) fn u32_le_opt(buf: &[u8], off: usize) -> Option<u32> {
-    buf.get(off..off + 4)
-        .and_then(|s| s.try_into().ok())
-        .map(u32::from_le_bytes)
+pub fn u32_le_opt(buf: &[u8], off: usize) -> Option<u32> {
+    buf.get(off..off + 4).and_then(|s| s.try_into().ok()).map(u32::from_le_bytes)
 }
 
 /// Optional little-endian `u64` (hot paths that skip on corruption).
-pub(crate) fn u64_le_opt(buf: &[u8], off: usize) -> Option<u64> {
-    buf.get(off..off + 8)
-        .and_then(|s| s.try_into().ok())
-        .map(u64::from_le_bytes)
+pub fn u64_le_opt(buf: &[u8], off: usize) -> Option<u64> {
+    buf.get(off..off + 8).and_then(|s| s.try_into().ok()).map(u64::from_le_bytes)
 }
 
 /// Optional little-endian `i32`.
-pub(crate) fn i32_le_opt(buf: &[u8], off: usize) -> Option<i32> {
-    buf.get(off..off + 4)
-        .and_then(|s| s.try_into().ok())
-        .map(i32::from_le_bytes)
+pub fn i32_le_opt(buf: &[u8], off: usize) -> Option<i32> {
+    buf.get(off..off + 4).and_then(|s| s.try_into().ok()).map(i32::from_le_bytes)
 }
 
 /// Memory-maps `path` and checks magic + version.
 ///
-/// # Safety contract
-///
 /// Caller must not truncate or overwrite the file in place while mapped
 /// (doing so can SIGBUS). Replace indexes via import publish and restart.
-pub(crate) fn map_file(
+///
+/// # Errors
+///
+/// Returns an I/O error when open/mmap fails, or `err` when the header is
+/// missing, mismatched, or an unsupported version.
+pub fn map_file(
     path: &Path,
-    magic: &[u8; 4],
+    magic: [u8; 4],
     version: u32,
     err: impl Fn(String) -> CoreError,
 ) -> Result<Mmap, CoreError> {
     let file = File::open(path)
         .map_err(|e| CoreError::io(format!("failed to open {}: {e}", path.display())))?;
+    #[expect(
+        unsafe_code,
+        reason = "memmap2::Mmap::map is unsafe; caller must not truncate/remap while live"
+    )]
+    // SAFETY: import publish replaces trees and restarts readers; live serve
+    // holds a shared lock so the mapped file is not truncated in place.
     let mmap =
-        // SAFETY: see function contract above.
         unsafe { Mmap::map(&file) }.map_err(|e| CoreError::io(format!("mmap failed: {e}")))?;
-    let header = mmap
-        .get(..4)
-        .ok_or_else(|| err(format!("{} bad header", path.display())))?;
+    let header = mmap.get(..4).ok_or_else(|| err(format!("{} bad header", path.display())))?;
     if mmap.len() < 16 || header != magic {
         return Err(err(format!("{} bad header", path.display())));
     }

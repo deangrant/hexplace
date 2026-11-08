@@ -19,7 +19,7 @@ report remaining failures).
 ## Required
 
 ```bash
-cargo fmt --all -- --check
+cargo +nightly fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```

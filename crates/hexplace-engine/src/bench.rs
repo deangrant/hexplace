@@ -7,7 +7,7 @@ use hexplace_core::{CoreError, Geocoder, ReverseQuery};
 use crate::service::Engine;
 
 /// Summary of a reverse bulk timing run.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct BenchReport {
     /// Number of reverse lookups performed.
     pub count: usize,
@@ -36,8 +36,16 @@ pub fn bench_reverse(
     let start = Instant::now();
     for i in 0..count {
         // Small deterministic jitter so we do not hit one identical cell only.
-        let lat = seed_lat + ((i % 50) as f64) * 0.0001;
-        let lon = seed_lon + ((i % 70) as f64) * 0.0001;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "bench jitter index fits exactly in f64 for practical counts"
+        )]
+        let lat = ((i % 50) as f64).mul_add(0.0001, seed_lat);
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "bench jitter index fits exactly in f64 for practical counts"
+        )]
+        let lon = ((i % 70) as f64).mul_add(0.0001, seed_lon);
         let query = ReverseQuery::new(lat, lon, Some(1))?;
         let item_start = Instant::now();
         engine.reverse(&query)?;
@@ -47,6 +55,10 @@ pub fn bench_reverse(
     latencies_ms.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let p50_ms = percentile(&latencies_ms, 0.50);
     let p99_ms = percentile(&latencies_ms, 0.99);
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "QPS reporting only; count is a bench sample size"
+    )]
     let qps = if total_secs > 0.0 {
         count as f64 / total_secs
     } else {
@@ -65,9 +77,12 @@ fn percentile(sorted_ms: &[f64], p: f64) -> f64 {
     if sorted_ms.is_empty() {
         return 0.0;
     }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "percentile index from a non-negative fraction of len-1"
+    )]
     let idx = ((sorted_ms.len() as f64 - 1.0) * p).round() as usize;
-    sorted_ms
-        .get(idx.min(sorted_ms.len() - 1))
-        .copied()
-        .unwrap_or(0.0)
+    sorted_ms.get(idx.min(sorted_ms.len() - 1)).copied().unwrap_or(0.0)
 }

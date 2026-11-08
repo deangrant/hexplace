@@ -1,5 +1,7 @@
 //! Axum HTTP API for Hexplace.
 
+use std::fmt;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,8 +27,15 @@ pub struct AppState {
     engine: Arc<Engine>,
 }
 
+impl fmt::Debug for AppState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AppState").field("engine", &"Engine").finish()
+    }
+}
+
 impl AppState {
     /// Wraps an engine for HTTP handlers.
+    #[must_use]
     pub fn new(engine: Engine) -> Self {
         Self {
             engine: Arc::new(engine),
@@ -73,52 +82,58 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Serves the API until shutdown.
+/// Serves the API until a shutdown signal is received.
+///
+/// # Errors
+///
+/// Returns bind failures, signal-handler install failures, or server I/O errors.
 pub async fn serve(engine: Engine, bind: SocketAddr) -> Result<(), CoreError> {
     let state = AppState::new(engine);
     let app = router(state);
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|e| CoreError::io(format!("bind {bind}: {e}")))?;
+    let shutdown = shutdown_signal()?;
     tracing::info!("listening on http://{bind}");
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown)
         .await
         .map_err(|e| CoreError::io(format!("server error: {e}")))?;
     Ok(())
 }
 
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        #[expect(
-            clippy::expect_used,
-            reason = "signal install failure is fatal at process bootstrap"
-        )]
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
+/// Installs process signal handlers and returns a future that waits for one.
+///
+/// # Errors
+///
+/// Returns an I/O error when a required signal handler cannot be installed.
+fn shutdown_signal() -> Result<impl Future<Output = ()>, CoreError> {
     #[cfg(unix)]
-    let terminate = async {
-        #[expect(
-            clippy::expect_used,
-            reason = "signal install failure is fatal at process bootstrap"
-        )]
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
+    {
+        let mut interrupt =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+                .map_err(|e| CoreError::io(format!("install SIGINT handler: {e}")))?;
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .map_err(|e| CoreError::io(format!("install SIGTERM handler: {e}")))?;
+        Ok(async move {
+            tokio::select! {
+                _ = interrupt.recv() => {},
+                _ = terminate.recv() => {},
+            }
+            tracing::info!("shutdown signal received");
+        })
+    }
 
     #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+    {
+        Ok(async {
+            match tokio::signal::ctrl_c().await {
+                Ok(()) => tracing::info!("shutdown signal received"),
+                Err(err) => tracing::error!("Ctrl+C handler failed: {err}"),
+            }
+        })
     }
-    tracing::info!("shutdown signal received");
 }
 
 #[derive(Serialize)]
@@ -205,27 +220,14 @@ async fn reverse_bulk(
     headers: HeaderMap,
     body: Body,
 ) -> Result<Response, ApiError> {
-    let accept = headers
-        .get(header::ACCEPT)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/x-ndjson");
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/json");
+    let accept = header_str(&headers, header::ACCEPT, "application/x-ndjson");
+    let content_type = header_str(&headers, header::CONTENT_TYPE, "application/json");
 
     let bytes = axum::body::to_bytes(body, BATCH_BODY_LIMIT_BYTES)
         .await
         .map_err(|e| CoreError::invalid(format!("failed to read body: {e}")))?;
 
-    let points = if content_type.contains("octet-stream") {
-        parse_binary_points(&bytes)?
-    } else {
-        let req: ReverseBulkRequest = serde_json::from_slice(&bytes)
-            .map_err(|e| CoreError::invalid(format!("invalid bulk JSON: {e}")))?;
-        req.points
-    };
-
+    let points = parse_bulk_points(content_type, &bytes)?;
     let engine = Arc::clone(&state.engine);
     let hits = tokio::task::spawn_blocking(move || engine.reverse_bulk(&points))
         .await
@@ -238,6 +240,31 @@ async fn reverse_bulk(
     }
 }
 
+/// Reads a header as UTF-8 text, or `default` when missing or invalid.
+fn header_str<'a>(headers: &'a HeaderMap, name: header::HeaderName, default: &'a str) -> &'a str {
+    headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or(default)
+}
+
+/// Parses reverse-bulk points from JSON or packed binary `f32` pairs.
+///
+/// # Errors
+///
+/// Returns validation errors for empty, oversized, or malformed bodies.
+fn parse_bulk_points(content_type: &str, bytes: &[u8]) -> Result<Vec<[f64; 2]>, CoreError> {
+    if content_type.contains("octet-stream") {
+        parse_binary_points(bytes)
+    } else {
+        let req: ReverseBulkRequest = serde_json::from_slice(bytes)
+            .map_err(|e| CoreError::invalid(format!("invalid bulk JSON: {e}")))?;
+        Ok(req.points)
+    }
+}
+
+/// Decodes packed little-endian `f32` lat/lon pairs into degrees.
+///
+/// # Errors
+///
+/// Returns validation errors for truncated, empty, or oversized bodies.
 fn parse_binary_points(bytes: &[u8]) -> Result<Vec<[f64; 2]>, CoreError> {
     if bytes.len() % 8 != 0 {
         return Err(CoreError::invalid(
@@ -257,13 +284,18 @@ fn parse_binary_points(bytes: &[u8]) -> Result<Vec<[f64; 2]>, CoreError> {
     let mut points = Vec::with_capacity(count);
     for i in 0..count {
         let off = i * 8;
-        let lat = f32_le(bytes, off)? as f64;
-        let lon = f32_le(bytes, off + 4)? as f64;
+        let lat = f64::from(f32_le(bytes, off)?);
+        let lon = f64::from(f32_le(bytes, off + 4)?);
         points.push([lat, lon]);
     }
     Ok(points)
 }
 
+/// Reads one little-endian `f32` at `off`.
+///
+/// # Errors
+///
+/// Returns an invalid-request error when the slice is too short.
 fn f32_le(buf: &[u8], off: usize) -> Result<f32, CoreError> {
     let bytes: [u8; 4] = buf
         .get(off..off + 4)
@@ -272,6 +304,11 @@ fn f32_le(buf: &[u8], off: usize) -> Result<f32, CoreError> {
     Ok(f32::from_le_bytes(bytes))
 }
 
+/// Encodes reverse-bulk hits as newline-delimited JSON.
+///
+/// # Errors
+///
+/// Returns an I/O-mapped error when a hit cannot be serialized.
 fn ndjson_bulk_response(hits: &[ReverseBulkHit]) -> Result<Response, ApiError> {
     let mut out = String::new();
     for hit in hits {
@@ -283,20 +320,18 @@ fn ndjson_bulk_response(hits: &[ReverseBulkHit]) -> Result<Response, ApiError> {
     Ok(([(header::CONTENT_TYPE, "application/x-ndjson")], out).into_response())
 }
 
+/// Encodes reverse-bulk hits as packed binary present/id/score records.
 fn binary_bulk_response(hits: &[ReverseBulkHit]) -> Response {
     let mut bytes = Vec::with_capacity(hits.len() * BINARY_BULK_HIT_BYTES);
     for hit in hits {
-        match (hit.place_id, hit.score) {
-            (Some(id), Some(score)) => {
-                bytes.push(1);
-                bytes.extend_from_slice(&id.to_le_bytes());
-                bytes.extend_from_slice(&score.to_le_bytes());
-            }
-            _ => {
-                bytes.push(0);
-                bytes.extend_from_slice(&0u64.to_le_bytes());
-                bytes.extend_from_slice(&0f32.to_le_bytes());
-            }
+        if let (Some(id), Some(score)) = (hit.place_id, hit.score) {
+            bytes.push(1);
+            bytes.extend_from_slice(&id.to_le_bytes());
+            bytes.extend_from_slice(&score.to_le_bytes());
+        } else {
+            bytes.push(0);
+            bytes.extend_from_slice(&0u64.to_le_bytes());
+            bytes.extend_from_slice(&0f32.to_le_bytes());
         }
     }
     ([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response()
@@ -316,7 +351,10 @@ impl IntoResponse for ApiError {
         let status = match &self.0 {
             CoreError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             CoreError::NotFound(_) => StatusCode::NOT_FOUND,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
+            CoreError::Storage(_)
+            | CoreError::Index(_)
+            | CoreError::Import(_)
+            | CoreError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         let body = Json(serde_json::json!({ "error": self.0.to_string() }));
         (status, body).into_response()

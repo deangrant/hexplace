@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Format edited Rust files after agent edits. Fail-open if tools are missing.
+# Prefer nightly so imports_granularity / group_imports from rustfmt.toml apply.
 set -u
 
 input=$(cat || true)
@@ -24,13 +25,20 @@ if [[ ! -f "${file_path}" ]]; then
   exit 0
 fi
 
+if command -v rustup >/dev/null 2>&1 && rustup run nightly rustfmt --version >/dev/null 2>&1; then
+  rustup run nightly rustfmt --edition 2021 "${file_path}" >/dev/null 2>&1 || true
+  exit 0
+fi
+
 if command -v rustfmt >/dev/null 2>&1; then
   rustfmt --edition 2021 "${file_path}" >/dev/null 2>&1 || true
   exit 0
 fi
 
 if command -v cargo >/dev/null 2>&1; then
-  cargo fmt -- "${file_path}" >/dev/null 2>&1 || true
+  cargo +nightly fmt -- "${file_path}" >/dev/null 2>&1 \
+    || cargo fmt -- "${file_path}" >/dev/null 2>&1 \
+    || true
 fi
 
 exit 0

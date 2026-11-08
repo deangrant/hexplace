@@ -16,9 +16,9 @@ pub const H3_RESOLUTION_FINE: u8 = 10;
 /// Coarse H3 resolution for empty-cell fallback (~36 km²).
 pub const H3_RESOLUTION_COARSE: u8 = 6;
 
-const CELLS_MAGIC: &[u8; 4] = b"GFCL";
-const OFFSETS_MAGIC: &[u8; 4] = b"GFOF";
-const POSTINGS_MAGIC: &[u8; 4] = b"GFPO";
+const CELLS_MAGIC: [u8; 4] = *b"GFCL";
+const OFFSETS_MAGIC: [u8; 4] = *b"GFOF";
+const POSTINGS_MAGIC: [u8; 4] = *b"GFPO";
 const VERSION: u32 = 2;
 
 /// Paths for fine and coarse CSR indexes.
@@ -35,16 +35,22 @@ impl SpatialPaths {
     }
 
     /// Fine-level CSR directory.
+    #[must_use]
     pub fn fine(&self) -> CsrPaths {
         CsrPaths::new(self.root.join("fine"))
     }
 
     /// Coarse-level CSR directory.
+    #[must_use]
     pub fn coarse(&self) -> CsrPaths {
         CsrPaths::new(self.root.join("coarse"))
     }
 
     /// Ensures fine and coarse directories exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when either layer directory cannot be created.
     pub fn ensure(&self) -> Result<(), CoreError> {
         fs::create_dir_all(self.fine().root)?;
         fs::create_dir_all(self.coarse().root)?;
@@ -66,22 +72,30 @@ impl CsrPaths {
     }
 
     /// Sorted cell ids file.
+    #[must_use]
     pub fn cells(&self) -> PathBuf {
         self.root.join("cells.bin")
     }
 
     /// Cell offset table file.
+    #[must_use]
     pub fn offsets(&self) -> PathBuf {
         self.root.join("cell_offsets.bin")
     }
 
     /// Place-id postings file.
+    #[must_use]
     pub fn postings(&self) -> PathBuf {
         self.root.join("postings.bin")
     }
 }
 
 /// Builds fine and coarse CSR indexes for `places`.
+///
+/// # Errors
+///
+/// Returns an index or I/O error when coordinates are invalid, place ids do not
+/// fit postings width, or files cannot be written.
 pub fn build_index(places: &[Place], paths: &SpatialPaths) -> Result<(), CoreError> {
     paths.ensure()?;
     build_csr_layer(places, &paths.fine(), H3_RESOLUTION_FINE)?;
@@ -94,7 +108,7 @@ fn build_csr_layer(places: &[Place], paths: &CsrPaths, resolution: u8) -> Result
         .map_err(|e| CoreError::index(format!("invalid H3 resolution: {e}")))?;
 
     // Postings are intentionally 32-bit until a future spatial format bump.
-    if places.len() > u32::MAX as usize {
+    if places.len() > usize::try_from(u32::MAX).unwrap_or(usize::MAX) {
         return Err(CoreError::index(
             "place count exceeds u32; spatial postings are 32-bit",
         ));
@@ -112,10 +126,7 @@ fn build_csr_layer(places: &[Place], paths: &CsrPaths, resolution: u8) -> Result
                 place.place_id
             ))
         })?;
-        buckets
-            .entry(cell)
-            .or_default()
-            .push((place_id, place.importance));
+        buckets.entry(cell).or_default().push((place_id, place.importance));
     }
 
     let mut cells: Vec<u64> = buckets.keys().copied().collect();
@@ -134,7 +145,10 @@ fn build_csr_layer(places: &[Place], paths: &CsrPaths, resolution: u8) -> Result
         for (place_id, _) in entries {
             postings.push(place_id);
         }
-        offsets.push(postings.len() as u64);
+        offsets.push(
+            u64::try_from(postings.len())
+                .map_err(|_| CoreError::index("CSR postings length exceeds u64"))?,
+        );
     }
 
     write_u64_file(&paths.cells(), CELLS_MAGIC, &cells)?;
@@ -143,12 +157,14 @@ fn build_csr_layer(places: &[Place], paths: &CsrPaths, resolution: u8) -> Result
     Ok(())
 }
 
-fn write_u64_file(path: &Path, magic: &[u8; 4], values: &[u64]) -> Result<(), CoreError> {
+fn write_u64_file(path: &Path, magic: [u8; 4], values: &[u64]) -> Result<(), CoreError> {
     let file = File::create(path)?;
     let mut out = BufWriter::new(file);
-    out.write_all(magic)?;
+    out.write_all(&magic)?;
     out.write_all(&VERSION.to_le_bytes())?;
-    out.write_all(&(values.len() as u64).to_le_bytes())?;
+    let len = u64::try_from(values.len())
+        .map_err(|_| CoreError::index("CSR column length exceeds u64"))?;
+    out.write_all(&len.to_le_bytes())?;
     for v in values {
         out.write_all(&v.to_le_bytes())?;
     }
@@ -156,12 +172,14 @@ fn write_u64_file(path: &Path, magic: &[u8; 4], values: &[u64]) -> Result<(), Co
     Ok(())
 }
 
-fn write_u32_file(path: &Path, magic: &[u8; 4], values: &[u32]) -> Result<(), CoreError> {
+fn write_u32_file(path: &Path, magic: [u8; 4], values: &[u32]) -> Result<(), CoreError> {
     let file = File::create(path)?;
     let mut out = BufWriter::new(file);
-    out.write_all(magic)?;
+    out.write_all(&magic)?;
     out.write_all(&VERSION.to_le_bytes())?;
-    out.write_all(&(values.len() as u64).to_le_bytes())?;
+    let len = u64::try_from(values.len())
+        .map_err(|_| CoreError::index("CSR column length exceeds u64"))?;
+    out.write_all(&len.to_le_bytes())?;
     for v in values {
         out.write_all(&v.to_le_bytes())?;
     }
@@ -230,8 +248,14 @@ impl CsrLayer {
     }
 
     fn lookup_cell_ids(&self, cell: u64) -> Vec<PlaceId> {
+        // `open` already rejected counts that do not fit `usize` / column bytes.
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "cell_count validated to fit mapped column length on this host"
+        )]
+        let cell_count = self.cell_count as usize;
         let mut lo = 0usize;
-        let mut hi = self.cell_count as usize;
+        let mut hi = cell_count;
         while lo < hi {
             let mid = (lo + hi) / 2;
             let Some(c) = self.cell_at(mid) else {
@@ -246,13 +270,13 @@ impl CsrLayer {
         let Some(found) = self.cell_at(lo) else {
             return Vec::new();
         };
-        if lo >= self.cell_count as usize || found != cell {
+        if lo >= cell_count || found != cell {
             return Vec::new();
         }
-        let Some(start) = self.offset_at(lo).map(|v| v as usize) else {
+        let Some(start) = self.offset_at(lo).and_then(|v| usize::try_from(v).ok()) else {
             return Vec::new();
         };
-        let Some(end) = self.offset_at(lo + 1).map(|v| v as usize) else {
+        let Some(end) = self.offset_at(lo + 1).and_then(|v| usize::try_from(v).ok()) else {
             return Vec::new();
         };
         let mut ids = Vec::with_capacity(end.saturating_sub(start));
@@ -277,12 +301,13 @@ fn column_byte_len(count: u64, stride: usize) -> Result<usize, CoreError> {
     let body = count
         .checked_mul(stride)
         .ok_or_else(|| CoreError::index("CSR column size overflow"))?;
-    body.checked_add(16)
-        .ok_or_else(|| CoreError::index("CSR column size overflow"))
+    body.checked_add(16).ok_or_else(|| CoreError::index("CSR column size overflow"))
 }
 
 fn u64_at(mmap: &Mmap, index: u64) -> Result<u64, CoreError> {
-    let start = 16 + index as usize * 8;
+    let index =
+        usize::try_from(index).map_err(|_| CoreError::index("CSR offset index too large"))?;
+    let start = 16 + index * 8;
     u64_le(mmap, start).map_err(|_| CoreError::index("CSR offsets truncated"))
 }
 
@@ -318,8 +343,24 @@ pub struct H3SpatialIndex {
     coarse_res: Resolution,
 }
 
+impl std::fmt::Debug for H3SpatialIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("H3SpatialIndex")
+            .field("fine_cells", &self.fine.cell_count)
+            .field("coarse_cells", &self.coarse.cell_count)
+            .field("fine_res", &self.fine_res)
+            .field("coarse_res", &self.coarse_res)
+            .finish()
+    }
+}
+
 impl H3SpatialIndex {
     /// Opens fine and coarse CSR layers from `paths`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an index or I/O error when a CSR file is missing, truncated, or
+    /// has an invalid offset table.
     pub fn open(paths: &SpatialPaths) -> Result<Self, CoreError> {
         let fine = CsrLayer::open(&paths.fine())?;
         let coarse = CsrLayer::open(&paths.coarse())?;

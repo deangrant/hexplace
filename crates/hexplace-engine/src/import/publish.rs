@@ -12,16 +12,14 @@ use hexplace_core::CoreError;
 pub const LOCK_FILE_NAME: &str = ".lock";
 
 /// Creates a unique staging directory beside `target`.
+///
+/// # Errors
+///
+/// Returns an import error when the staging directory cannot be created.
 pub fn create_staging_dir(target: &Path) -> Result<PathBuf, CoreError> {
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
-    let name = target
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("data");
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    let name = target.file_name().and_then(|s| s.to_str()).unwrap_or("data");
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let staging = parent.join(format!(".{name}.staging-{}-{stamp}", std::process::id()));
     fs::create_dir_all(&staging).map_err(|e| {
         CoreError::import(format!(
@@ -33,12 +31,13 @@ pub fn create_staging_dir(target: &Path) -> Result<PathBuf, CoreError> {
 }
 
 /// Removes leftover staging/obsolete siblings from prior crashed imports.
+///
+/// # Errors
+///
+/// Returns an I/O error when parent listing or legacy-file removal fails.
 pub fn cleanup_orphans(target: &Path) -> Result<(), CoreError> {
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
-    let name = target
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("data");
+    let name = target.file_name().and_then(|s| s.to_str()).unwrap_or("data");
     let staging_prefix = format!(".{name}.staging-");
     let obsolete_prefix = format!(".{name}.obsolete-");
     let entries = match fs::read_dir(parent) {
@@ -78,6 +77,10 @@ pub fn cleanup_orphans(target: &Path) -> Result<(), CoreError> {
 }
 
 /// Opens (or creates) the data-dir lock and acquires a shared flock.
+///
+/// # Errors
+///
+/// Returns an I/O error when the lock file cannot be opened or locked.
 pub fn acquire_shared_lock(data_dir: &Path) -> Result<File, CoreError> {
     let path = data_dir.join(LOCK_FILE_NAME);
     let file = OpenOptions::new()
@@ -96,6 +99,12 @@ pub fn acquire_shared_lock(data_dir: &Path) -> Result<File, CoreError> {
 ///
 /// If `target` already exists, requires an exclusive lock on its `.lock` file
 /// so a running serve process cannot be swapped out from under mmap/Tantivy.
+///
+/// # Errors
+///
+/// Returns an import error when the exclusive lock is held, a rename fails, or
+/// parent directories cannot be created. Returns an I/O error for lock-file open
+/// failures other than contention.
 pub fn publish_data_dir(staging: &Path, target: &Path) -> Result<(), CoreError> {
     let _exclusive = if target.exists() {
         Some(acquire_exclusive_lock(target)?)
@@ -104,7 +113,7 @@ pub fn publish_data_dir(staging: &Path, target: &Path) -> Result<(), CoreError> 
     };
 
     let obsolete = if target.exists() {
-        let path = obsolete_path(target)?;
+        let path = obsolete_path(target);
         fs::rename(target, &path).map_err(|e| {
             CoreError::import(format!("failed to move {} aside: {e}", target.display()))
         })?;
@@ -143,6 +152,12 @@ pub fn discard_staging(staging: &Path) {
     let _ = fs::remove_dir_all(staging);
 }
 
+/// Opens the data-dir lock and takes an exclusive non-blocking flock.
+///
+/// # Errors
+///
+/// Returns an import error when another process holds the lock (`WouldBlock`),
+/// or an I/O error when the lock file cannot be opened or locked otherwise.
 fn acquire_exclusive_lock(data_dir: &Path) -> Result<File, CoreError> {
     let path = data_dir.join(LOCK_FILE_NAME);
     let file = OpenOptions::new()
@@ -164,31 +179,35 @@ fn acquire_exclusive_lock(data_dir: &Path) -> Result<File, CoreError> {
     }
 }
 
-fn obsolete_path(target: &Path) -> Result<PathBuf, CoreError> {
+fn obsolete_path(target: &Path) -> PathBuf {
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
-    let name = target
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("data");
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    Ok(parent.join(format!(".{name}.obsolete-{}-{stamp}", std::process::id())))
+    let name = target.file_name().and_then(|s| s.to_str()).unwrap_or("data");
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    parent.join(format!(".{name}.obsolete-{}-{stamp}", std::process::id()))
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Result tests assert contracts after fallible setup via ?"
+)]
 mod tests {
     use super::*;
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     #[test]
-    fn cleanup_orphans_removes_legacy_places_bin() {
-        let parent = tempfile::tempdir().unwrap();
+    fn cleanup_orphans_removes_legacy_places_bin() -> TestResult {
+        let parent = tempfile::tempdir()?;
         let data = parent.path().join("data");
-        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(&data)?;
         let legacy = data.join("places.bin");
-        fs::write(&legacy, b"obsolete").unwrap();
-        cleanup_orphans(&data).unwrap();
-        assert!(!legacy.exists());
+        fs::write(&legacy, b"obsolete")?;
+        cleanup_orphans(&data)?;
+        assert!(
+            !legacy.exists(),
+            "legacy places.bin beside the data dir must be removed"
+        );
+        Ok(())
     }
 }
