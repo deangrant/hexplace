@@ -99,8 +99,7 @@ impl Manifest {
         source_hash: impl Into<String>,
         place_count: u64,
     ) -> Self {
-        let built_at_unix =
-            SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let built_at_unix = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
         Self {
             schema_version: SCHEMA_VERSION,
             source_path: source_path.into(),

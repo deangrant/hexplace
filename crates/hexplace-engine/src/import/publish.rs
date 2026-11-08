@@ -19,7 +19,7 @@ pub const LOCK_FILE_NAME: &str = ".lock";
 pub fn create_staging_dir(target: &Path) -> Result<PathBuf, CoreError> {
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     let name = target.file_name().and_then(|s| s.to_str()).unwrap_or("data");
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let staging = parent.join(format!(".{name}.staging-{}-{stamp}", std::process::id()));
     fs::create_dir_all(&staging).map_err(|e| {
         CoreError::import(format!(
@@ -182,7 +182,7 @@ fn acquire_exclusive_lock(data_dir: &Path) -> Result<File, CoreError> {
 fn obsolete_path(target: &Path) -> PathBuf {
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     let name = target.file_name().and_then(|s| s.to_str()).unwrap_or("data");
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     parent.join(format!(".{name}.obsolete-{}-{stamp}", std::process::id()))
 }
 

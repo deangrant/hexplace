@@ -296,8 +296,7 @@ impl Geocoder for Engine {
 
 fn worker_count(len: usize) -> usize {
     std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(1)
+        .map_or(1, std::num::NonZeroUsize::get)
         .min(len)
         .max(1)
 }
