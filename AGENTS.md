@@ -18,7 +18,7 @@ inventing project conventions.
 - [`.agents/rules/hexplace-project.mdc`](.agents/rules/hexplace-project.mdc) —
   always-on out-of-scope limits and skill routing
 - [`.agents/rules/rust-style.mdc`](.agents/rules/rust-style.mdc) — 100-col /
-  500-line caps; points at style-guide-rust
+  500-line caps and Rust style constraints
 - [`.agents/rules/crate-boundaries.mdc`](.agents/rules/crate-boundaries.mdc) —
   core → engine → HTTP ownership and dependency direction
 
@@ -31,9 +31,6 @@ inventing project conventions.
   import, staging/lock, schema bumps, fixtures
 - [`.agents/skills/hexplace-verify/`](.agents/skills/hexplace-verify/) — CI-parity
   fmt / clippy / test checklist
-- [`.agents/skills/solid-rust/`](.agents/skills/solid-rust/) — SOLID design in Rust
-- [`.agents/skills/style-guide-rust/`](.agents/skills/style-guide-rust/) — Rust
-  formatting, file size, docs, naming
 
 ## Commands
 

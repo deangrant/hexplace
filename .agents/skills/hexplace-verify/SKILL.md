@@ -39,4 +39,5 @@ cargo audit
 
 - Line width 100; avoid growing `.rs` files past ~500 lines
 - Prefer `#[expect]` over `#[allow]`
-- See skills `style-guide-rust` and `solid-rust` for deeper guidance
+- Follow [`.agents/rules/rust-style.mdc`](../../rules/rust-style.mdc) and
+  [`.agents/rules/crate-boundaries.mdc`](../../rules/crate-boundaries.mdc)
