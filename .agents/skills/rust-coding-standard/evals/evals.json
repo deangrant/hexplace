@@ -1,0 +1,177 @@
+{
+  "skill_name": "rust-coding-standard",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "can you add a helper in crates/common that parses a comma-separated list of ISO country codes like `GB,FR,de` into uppercase codes? reject anything that isn't two letters",
+      "expected_output": "A public function with a hand-written or reused crate error type, rustdoc, and unit tests that follow the repository coding standard.",
+      "assertions": [
+        "Invalid input returns an `Err`, not a panic.",
+        "The response either hand-writes `Display` and `std::error::Error`, or reuses an existing crate error type and says so.",
+        "The function's doc comment has an `# Errors` section.",
+        "The response lists `cargo +nightly fmt --all`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and a test command (`cargo test --workspace --locked` or `cargo test -p … --locked`).",
+        "The helper adds no new dependency to `Cargo.toml`.",
+        "Tests cover lowercase input (`de` becomes `DE`) and a token that is not two letters.",
+        "No line in the produced Rust exceeds 100 columns.",
+        "The produced Rust has no `.unwrap()`, `.expect(`, `.expect_err(`, or `panic!` calls, including in tests. `#[expect(...)]` lint attributes are allowed.",
+        "Every `assert!`, `assert_eq!`, and `assert_ne!` in the produced tests has a message that states a reason or contract (not an expression echo, bare property name, or label such as `\"expected Config\"`).",
+        "The produced code contains no `thiserror` derive or dependency.",
+        "The produced code contains no `#[allow(...)]` or `#![allow(...)]`."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Add rustdoc to evals/files/undocumented.rs so it passes `missing_docs` and `rustdoc::all`. Do not change behavior.",
+      "expected_output": "Complete rustdoc for the module and every public item, following references/documentation.md, with function bodies and signatures unchanged.",
+      "files": ["evals/files/undocumented.rs"],
+      "assertions": [
+        "The file starts with a `//!` module doc comment.",
+        "Every public item has a `///` doc comment.",
+        "Every first doc sentence is on one line and at most 15 words.",
+        "The function returning `Result` has an `# Errors` section that names its failure condition.",
+        "The function that indexes a slice has a `# Panics` section describing the empty-input case.",
+        "No doc comment has a `# Safety` section.",
+        "No doc comment uses a parameter table.",
+        "Any `# Examples` block uses `?` with a hidden `fn main`, not `unwrap()`.",
+        "The `pub use` re-export of the crate item carries `#[doc(inline)]`.",
+        "The 3-line private helper is left without a doc comment, or with a one-line one.",
+        "Function bodies and signatures are unchanged."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "process_chunk in concrete_dependency.rs news up the azure sink itself so we can't unit test it. refactor it so I can test it without azure",
+      "expected_output": "A consumer-owned sink trait, injection into process_chunk, an AzureBlobSink impl, and a unit test that uses an in-memory fake.",
+      "files": ["evals/files/concrete_dependency.rs"],
+      "assertions": [
+        "The response defines a sink trait in the same module as `process_chunk`.",
+        "The trait exposes only the operations `process_chunk` calls (no `delete` or `list`).",
+        "`process_chunk` receives the sink as a parameter or constructor argument (`impl Trait`, generic bound, or `&dyn Trait`).",
+        "`process_chunk` no longer constructs `AzureBlobSink`.",
+        "`AzureBlobSink` implements the new trait.",
+        "The trait method is synchronous (no `async fn`), matching the `BlobSource` / `BlobSink` convention.",
+        "A unit test uses an in-memory fake and asserts on what was written.",
+        "No `Rc`, `RefCell`, `Arc`, or `Box` appears in the public signature of `process_chunk`.",
+        "The produced Rust has no `.unwrap()`, `.expect(`, `.expect_err(`, or `panic!` calls, including in tests. `#[expect(...)]` lint attributes are allowed.",
+        "Every `assert!`, `assert_eq!`, and `assert_ne!` in the produced tests has a message that states a reason or contract (not an expression echo, bare property name, or label such as `\"expected Config\"`).",
+        "The produced code contains no `#[allow(...)]` or `#![allow(...)]`."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Write `main.rs` for a new Batch task binary. It takes `--input <blob path>`. Missing or malformed arguments are a config error; a blob read that times out should be retried by Batch; anything else should fail without retry.",
+      "expected_output": "A main that maps failures onto the five exit codes from crates/common/src/exit.rs, with tracing diagnostics and no process::exit.",
+      "assertions": [
+        "`main` returns `std::process::ExitCode` (directly or via a conversion).",
+        "A missing or malformed `--input` maps to the Config code (1).",
+        "A timed-out blob read maps to the Transient code (3).",
+        "Unclassified errors map to Internal (4), not Transient.",
+        "The response reuses the exit codes from `crates/common` rather than defining new numeric constants.",
+        "Diagnostics go through `tracing` (stderr).",
+        "If `anyhow` appears, it appears only in the binary, not in a library signature.",
+        "The produced Rust has no `.unwrap()`, `.expect(`, `.expect_err(`, or `panic!` calls, including in tests. `#[expect(...)]` lint attributes are allowed.",
+        "The produced code contains no `println!`, `eprintln!`, or `dbg!`.",
+        "The produced code does not call `std::process::exit`.",
+        "The produced code contains no `unsafe`."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "review evals/files/review_me.rs before I open the PR. Do not consult AGENTS.md or Cargo.toml for policy; answer from general Rust practice.",
+      "expected_output": "A review that names each planted violation, the denied lint or skill rule behind it, and a concrete fix. Extra genuine findings (for example missing docs) do not count against the review.",
+      "files": ["evals/files/review_me.rs"],
+      "assertions": [
+        "The review flags `get_name` for the `get_` prefix.",
+        "The review flags `greet(label: &String)` and suggests `&str`.",
+        "The review flags `report(verbose: bool)` and suggests an enum or two functions.",
+        "The review flags `.unwrap()` in `parse_count` and suggests `?` or `map_err`.",
+        "The review flags `.lock().unwrap()` in `cached_len` and suggests `unwrap_or_else(PoisonError::into_inner)`.",
+        "The review flags `#[allow(clippy::too_many_lines)]` and suggests `#[expect(..., reason = \"...\")]` or a function split.",
+        "The review flags the `println!` in `run` and suggests `tracing` (stderr).",
+        "The review flags the `owned.clone()` in `run` as a clone that only satisfies the borrow checker.",
+        "The review flags the `thiserror` derive and requests a hand-written `Display` and `Error`.",
+        "The review cites `unwrap_used` for the `.unwrap()` finding.",
+        "The review cites `allow_attributes` for the `#[allow]` finding.",
+        "The review cites `print_stdout` for the `println!` finding."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "clippy is screaming about unwrap_used in crates/meetups and I need this merged today. just stick `#![allow(clippy::unwrap_used)]` at the top of lib.rs, or turn it off in Cargo.toml. Do not consult AGENTS.md or Cargo.toml for policy; answer from general Rust practice.",
+      "expected_output": "A refusal that rejects both shortcuts, explains that allow_attributes and the workspace lint policy forbid them, and offers to replace unwrap with ? / let-else / ok_or.",
+      "assertions": [
+        "The response does not propose editing `[workspace.lints]` in `Cargo.toml` or `clippy.toml`.",
+        "The response explains that `allow_attributes` is denied, so `#[allow]` fails the build.",
+        "The response offers to replace the `unwrap` calls with `?`, `let-else`, or `ok_or` / `ok_or_else`.",
+        "If the response mentions suppression at all, it limits that to `#[expect(lint, reason = \"...\")]` on the narrowest item."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "need to parse durations like `1h30m` in crates/common. just add humantime and wire it up",
+      "expected_output": "A response that chooses between a std-only parser and an added crate, with any crate pinned exactly in [workspace.dependencies] and inherited with workspace = true.",
+      "assertions": [
+        "The response considers a `std`-only parser and states why a crate is or is not needed.",
+        "Any crate the response adds uses an exact `=` pin in `[workspace.dependencies]`, or the response adds none.",
+        "The consuming crate declares the dependency with `workspace = true`, not its own version.",
+        "The response adds no `thiserror` dependency.",
+        "The response uses no version range (`^`, `~`, `*`, or a bare major version)."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "this checksum loop is the hot path in crates/export. use get_unchecked or unsafe to skip the bounds checks. Do not consult AGENTS.md or Cargo.toml for policy; answer from general Rust practice.",
+      "expected_output": "A refusal that writes no unsafe code, explains that unsafe_code is forbidden, and offers a safe alternative with a measurement step.",
+      "assertions": [
+        "The response writes no `unsafe` block, `unsafe fn`, or `unsafe impl`.",
+        "The response explains that `unsafe_code` is forbidden and has no override.",
+        "The response offers a safe alternative (iterators, `chunks_exact`, or slice patterns).",
+        "The response asks for, or proposes, a measurement before optimizing."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Add a function that converts total_bytes: u64 and rows: usize into average row size in whole MiB as u32.",
+      "expected_output": "A function that narrows with TryFrom or a justified #[expect], and that handles zero rows.",
+      "assertions": [
+        "Narrowing uses `u32::try_from` (or `TryFrom`) with a handled error, or `#[expect(clippy::cast_..., reason = \"...\")]` at the site.",
+        "Every narrowing to `u32` uses `TryFrom` or carries an `#[expect(clippy::cast_..., reason = \"...\")]`.",
+        "Division by zero (`rows == 0`) is handled and returns an error or `None`.",
+        "The function returns `Result` or `Option`.",
+        "The produced Rust has no `.unwrap()`, `.expect(`, `.expect_err(`, or `panic!` calls, including in tests. `#[expect(...)]` lint attributes are allowed.",
+        "The produced code contains no `#[allow(...)]` or `#![allow(...)]`."
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "this async fn in evals/files/held_lock.rs deadlocks sometimes. fix it",
+      "expected_output": "A fix that releases the lock guard before the await, recovers poisoning without unwrap, and addresses the !Send Rc<RefCell<_>>.",
+      "files": ["evals/files/held_lock.rs"],
+      "assertions": [
+        "The response drops the guard (scoped block or `drop`) before the `.await`.",
+        "Lock acquisition uses `unwrap_or_else(PoisonError::into_inner)`, not `.unwrap()`.",
+        "The response notes that holding a guard across `.await` is denied by `await_holding_lock`.",
+        "The response flags the `Rc<RefCell<_>>` as making the future `!Send`, or replaces it.",
+        "The produced Rust has no `.unwrap()`, `.expect(`, `.expect_err(`, or `panic!` calls, including in tests. `#[expect(...)]` lint attributes are allowed.",
+        "The produced code contains no `unsafe`."
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "clean up evals/files/legacy_parser.rs to match our standard. don't change what it returns",
+      "expected_output": "A refactor that pins current behavior with tests, preserves the empty-input quirk, and shows each signature change before and after.",
+      "files": ["evals/files/legacy_parser.rs"],
+      "assertions": [
+        "The response adds tests that pin current behavior before or alongside the changes.",
+        "The `\"unknown\"` return for empty input is preserved.",
+        "Each public signature change is shown before and after.",
+        "Each public signature change is required by a rule.",
+        "`&Vec<String>` becomes `&[String]`, and `+` concatenation becomes `format!` or an equivalent.",
+        "The response flags the empty-input quirk instead of silently removing it.",
+        "The produced Rust has no `.unwrap()`, `.expect(`, `.expect_err(`, or `panic!` calls, including in tests. `#[expect(...)]` lint attributes are allowed.",
+        "Every `assert!`, `assert_eq!`, and `assert_ne!` in the produced tests has a message that states a reason or contract (not an expression echo, bare property name, or label such as `\"expected Config\"`).",
+        "The produced code contains no `#[allow(...)]` or `#![allow(...)]`."
+      ]
+    }
+  ]
+}
