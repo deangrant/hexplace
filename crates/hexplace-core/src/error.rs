@@ -27,26 +27,31 @@ pub enum CoreError {
 
 impl CoreError {
     /// Builds an invalid-request error from displayable context.
+    #[must_use]
     pub fn invalid(msg: impl fmt::Display) -> Self {
         Self::InvalidRequest(msg.to_string())
     }
 
     /// Builds a storage error from displayable context.
+    #[must_use]
     pub fn storage(msg: impl fmt::Display) -> Self {
         Self::Storage(msg.to_string())
     }
 
     /// Builds an index error from displayable context.
+    #[must_use]
     pub fn index(msg: impl fmt::Display) -> Self {
         Self::Index(msg.to_string())
     }
 
     /// Builds an import error from displayable context.
+    #[must_use]
     pub fn import(msg: impl fmt::Display) -> Self {
         Self::Import(msg.to_string())
     }
 
     /// Builds an I/O error from displayable context.
+    #[must_use]
     pub fn io(msg: impl fmt::Display) -> Self {
         Self::Io(msg.to_string())
     }

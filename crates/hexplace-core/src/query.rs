@@ -16,6 +16,11 @@ pub struct GeoPoint {
 
 impl GeoPoint {
     /// Creates a point after validating latitude and longitude ranges.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::InvalidRequest`] when latitude or longitude is
+    /// non-finite or outside the WGS84 ranges.
     pub fn new(lat: f64, lon: f64) -> Result<Self, CoreError> {
         if !lat.is_finite() {
             return Err(CoreError::invalid(format!(
@@ -56,6 +61,11 @@ impl SearchQuery {
     ///
     /// Omitted limits use [`Self::DEFAULT_LIMIT`]. Explicit `0` is rejected;
     /// values above [`Self::MAX_LIMIT`] are capped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::InvalidRequest`] when the query is empty after
+    /// trimming or when an explicit limit of `0` is provided.
     pub fn new(q: impl Into<String>, limit: Option<usize>) -> Result<Self, CoreError> {
         let q = q.into();
         let trimmed = q.trim();
@@ -95,6 +105,11 @@ impl ReverseQuery {
     ///
     /// Omitted limits use [`Self::DEFAULT_LIMIT`]. Explicit `0` is rejected;
     /// values above [`Self::MAX_LIMIT`] are capped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::InvalidRequest`] when the coordinates are invalid
+    /// or when an explicit limit of `0` is provided.
     pub fn new(lat: f64, lon: f64, limit: Option<usize>) -> Result<Self, CoreError> {
         let point = GeoPoint::new(lat, lon)?;
         let limit = match limit {

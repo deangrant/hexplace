@@ -14,6 +14,11 @@ use tantivy::{doc, Index, IndexReader, ReloadPolicy, TantivyDocument, Term};
 use crate::tokenize::{normalize_query, tokenize};
 
 /// Builds a Tantivy index for the given places.
+///
+/// # Errors
+///
+/// Returns an index or I/O error when the directory cannot be prepared or
+/// documents cannot be written/committed.
 pub fn build_index(places: &[Place], dir: &Path) -> Result<(), CoreError> {
     if dir.exists() {
         fs::remove_dir_all(dir)
@@ -101,8 +106,19 @@ pub struct TantivySearcher {
     place_id_field: Field,
 }
 
+impl std::fmt::Debug for TantivySearcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TantivySearcher").finish_non_exhaustive()
+    }
+}
+
 impl TantivySearcher {
     /// Opens a text index from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an index error when the directory cannot be opened or required
+    /// schema fields are missing.
     pub fn open(dir: &Path) -> Result<Self, CoreError> {
         let index = Index::open_in_dir(dir)
             .map_err(|e| CoreError::index(format!("open text index: {e}")))?;
@@ -127,10 +143,8 @@ impl TantivySearcher {
 }
 
 fn terms_query(text_field: Field, tokens: &[String]) -> Box<dyn tantivy::query::Query> {
-    let terms: Vec<Term> = tokens
-        .iter()
-        .map(|token| Term::from_field_text(text_field, token))
-        .collect();
+    let terms: Vec<Term> =
+        tokens.iter().map(|token| Term::from_field_text(text_field, token)).collect();
     match <[Term; 1]>::try_from(terms) {
         Ok([term]) => Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs)),
         Err(terms) => Box::new(BooleanQuery::new_multiterms_query(terms)),
@@ -151,16 +165,14 @@ impl TextSearcher for TantivySearcher {
 
         let mut out = Vec::with_capacity(top.len());
         for (score, addr) in top {
-            let doc: TantivyDocument = searcher
-                .doc(addr)
-                .map_err(|e| CoreError::index(format!("fetch doc: {e}")))?;
+            let doc: TantivyDocument =
+                searcher.doc(addr).map_err(|e| CoreError::index(format!("fetch doc: {e}")))?;
             let id_str = doc
                 .get_first(self.place_id_field)
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| CoreError::index("document missing place_id"))?;
-            let id: PlaceId = id_str
-                .parse()
-                .map_err(|e| CoreError::index(format!("bad place_id: {e}")))?;
+            let id: PlaceId =
+                id_str.parse().map_err(|e| CoreError::index(format!("bad place_id: {e}")))?;
             out.push((id, score));
         }
         Ok(out)

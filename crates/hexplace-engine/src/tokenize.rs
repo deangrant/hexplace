@@ -1,6 +1,7 @@
 //! Lightweight query and name tokenization using only `std`.
 
 /// Lowercases and splits text into alphanumeric tokens.
+#[must_use]
 pub fn tokenize(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -18,6 +19,7 @@ pub fn tokenize(input: &str) -> Vec<String> {
 }
 
 /// Joins tokens with spaces for index documents and queries.
+#[must_use]
 pub fn normalize_query(input: &str) -> String {
     tokenize(input).join(" ")
 }
@@ -30,12 +32,17 @@ mod tests {
     fn splits_and_lowercases() {
         assert_eq!(
             tokenize("Pilkington Avenue, Birmingham"),
-            vec!["pilkington", "avenue", "birmingham"]
+            vec!["pilkington", "avenue", "birmingham"],
+            "tokens must be lowercased alphanumeric runs"
         );
     }
 
     #[test]
     fn normalize_joins_tokens() {
-        assert_eq!(normalize_query("  Foo-Bar  Baz "), "foo bar baz");
+        assert_eq!(
+            normalize_query("  Foo-Bar  Baz "),
+            "foo bar baz",
+            "normalized queries must join tokens with single spaces"
+        );
     }
 }

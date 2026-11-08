@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 description = "Hexplace CLI and HTTP API for OSM geocoding."
 rust-version.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "hexplace"

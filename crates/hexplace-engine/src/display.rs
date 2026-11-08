@@ -7,6 +7,7 @@ use hexplace_core::{AddressParts, Place};
 /// Parts are appended independently in fixed order — name, house number, road,
 /// city, postcode, country — and joined with `", "`. House number is not merged
 /// with road; `country_code` is omitted. Locale-aware formatting is out of scope.
+#[must_use]
 pub fn format_display_name(name: Option<&str>, address: &AddressParts) -> String {
     let mut parts: Vec<&str> = Vec::new();
     if let Some(n) = name {
@@ -59,7 +60,8 @@ mod tests {
         };
         assert_eq!(
             format_display_name(Some("Cafe"), &address),
-            "Cafe, 10, Main St, Testville, 12345, Testland"
+            "Cafe, 10, Main St, Testville, 12345, Testland",
+            "display name must join name and address parts in fixed order"
         );
     }
 }

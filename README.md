@@ -81,7 +81,8 @@ Dependency direction: `hexplace` → `hexplace-engine` → `hexplace-core`.
 rustup show
 cargo build --release
 
-cargo fmt --all -- --check
+# Nightly rustfmt is required for imports_granularity / group_imports.
+cargo +nightly fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```

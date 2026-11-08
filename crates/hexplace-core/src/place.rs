@@ -19,7 +19,8 @@ pub enum OsmType {
 
 impl OsmType {
     /// Returns the single-letter OSM type code.
-    pub fn as_code(self) -> &'static str {
+    #[must_use]
+    pub const fn as_code(self) -> &'static str {
         match self {
             Self::Node => "N",
             Self::Way => "W",
@@ -31,6 +32,7 @@ impl OsmType {
     ///
     /// Accepts single-letter codes `N`/`W`/`R` (case-insensitive) and the full
     /// words `node`, `way`, and `relation`. Returns `None` for anything else.
+    #[must_use]
     pub fn from_code(code: &str) -> Option<Self> {
         match code {
             "N" | "n" | "node" => Some(Self::Node),
@@ -123,6 +125,7 @@ pub struct PlaceHit {
 
 impl PlaceHit {
     /// Builds a hit from a stored place and a ranking score.
+    #[must_use]
     pub fn from_place(place: &Place, score: f32) -> Self {
         let address = if place.address == AddressParts::default() {
             None
@@ -151,11 +154,35 @@ mod tests {
 
     #[test]
     fn from_code_accepts_letters_and_words() {
-        assert_eq!(OsmType::from_code("N"), Some(OsmType::Node));
-        assert_eq!(OsmType::from_code("w"), Some(OsmType::Way));
-        assert_eq!(OsmType::from_code("relation"), Some(OsmType::Relation));
-        assert_eq!(OsmType::from_code("node"), Some(OsmType::Node));
-        assert_eq!(OsmType::from_code("x"), None);
-        assert_eq!(OsmType::from_code("Node"), None);
+        assert_eq!(
+            OsmType::from_code("N"),
+            Some(OsmType::Node),
+            "uppercase N must parse as Node"
+        );
+        assert_eq!(
+            OsmType::from_code("w"),
+            Some(OsmType::Way),
+            "lowercase w must parse as Way"
+        );
+        assert_eq!(
+            OsmType::from_code("relation"),
+            Some(OsmType::Relation),
+            "full word relation must parse as Relation"
+        );
+        assert_eq!(
+            OsmType::from_code("node"),
+            Some(OsmType::Node),
+            "full word node must parse as Node"
+        );
+        assert_eq!(
+            OsmType::from_code("x"),
+            None,
+            "unknown single letter must be rejected"
+        );
+        assert_eq!(
+            OsmType::from_code("Node"),
+            None,
+            "title-case full words are outside the accepted set"
+        );
     }
 }

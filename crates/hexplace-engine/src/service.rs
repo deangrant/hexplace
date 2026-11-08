@@ -25,6 +25,7 @@ pub struct EngineConfig {
 
 impl EngineConfig {
     /// Creates a config for `data_dir`.
+    #[must_use]
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
         Self {
             data_dir: data_dir.into(),
@@ -40,8 +41,17 @@ pub struct Engine {
     text: Arc<TantivySearcher>,
     spatial: Arc<H3SpatialIndex>,
     /// Shared flock keeping import from publishing over a live serve.
-    #[expect(dead_code)]
+    #[expect(dead_code, reason = "lock must be held for Engine lifetime")]
     data_lock: File,
+}
+
+impl std::fmt::Debug for Engine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Engine")
+            .field("data_dir", &self.paths.root)
+            .field("place_count", &self.manifest.place_count)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Engine {
@@ -49,6 +59,11 @@ impl Engine {
     pub const MAX_BATCH_ITEMS: usize = 100_000;
 
     /// Opens indexes from an imported data directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage or I/O error when the lock, manifest, or indexes cannot
+    /// be opened, or when `place_count` disagrees with the store length.
     pub fn open(config: EngineConfig) -> Result<Self, CoreError> {
         let paths = DataPaths::new(config.data_dir);
         let data_lock = acquire_shared_lock(&paths.root)?;
@@ -74,16 +89,23 @@ impl Engine {
     }
 
     /// Returns the loaded manifest.
-    pub fn manifest(&self) -> &Manifest {
+    #[must_use]
+    pub const fn manifest(&self) -> &Manifest {
         &self.manifest
     }
 
     /// Returns the data directory root.
+    #[must_use]
     pub fn data_dir(&self) -> &Path {
         &self.paths.root
     }
 
     /// Reverse-geocodes many `[lat, lon]` points in parallel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-input error when `points` is empty or exceeds
+    /// [`Self::MAX_BATCH_ITEMS`].
     pub fn reverse_bulk(&self, points: &[[f64; 2]]) -> Result<Vec<ReverseBulkHit>, CoreError> {
         if points.is_empty() {
             return Err(CoreError::invalid("points must not be empty"));
@@ -180,11 +202,7 @@ impl Geocoder for Engine {
             let combined = forward_score(score, &place);
             results.push(PlaceHit::from_place(&place, combined));
         }
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(query.limit);
         Ok(results)
     }
@@ -244,13 +262,15 @@ impl Geocoder for Engine {
                     }),
                 ));
             }
-            fill_slots_from_joins(&mut slots, handles, |idx| match request.items.get(idx) {
-                Some(item) => batch_item_error(item, "batch worker panicked"),
-                None => BatchResult {
-                    id: None,
-                    results: Vec::new(),
-                    error: Some("batch worker panicked".into()),
-                },
+            fill_slots_from_joins(&mut slots, handles, |idx| {
+                request.items.get(idx).map_or_else(
+                    || BatchResult {
+                        id: None,
+                        results: Vec::new(),
+                        error: Some("batch worker panicked".into()),
+                    },
+                    |item| batch_item_error(item, "batch worker panicked"),
+                )
             });
         });
 
@@ -258,13 +278,15 @@ impl Geocoder for Engine {
             .into_iter()
             .enumerate()
             .map(|(idx, slot)| {
-                slot.unwrap_or_else(|| match request.items.get(idx) {
-                    Some(item) => batch_item_error(item, "batch worker panicked"),
-                    None => BatchResult {
-                        id: None,
-                        results: Vec::new(),
-                        error: Some("batch worker panicked".into()),
-                    },
+                slot.unwrap_or_else(|| {
+                    request.items.get(idx).map_or_else(
+                        || BatchResult {
+                            id: None,
+                            results: Vec::new(),
+                            error: Some("batch worker panicked".into()),
+                        },
+                        |item| batch_item_error(item, "batch worker panicked"),
+                    )
                 })
             })
             .collect();
@@ -274,8 +296,7 @@ impl Geocoder for Engine {
 
 fn worker_count(len: usize) -> usize {
     std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
+        .map_or(1, std::num::NonZeroUsize::get)
         .min(len)
         .max(1)
 }
@@ -330,7 +351,7 @@ fn reverse_one_bulk_hit(engine: &Engine, index: usize, lat: f64, lon: f64) -> Re
     }
 }
 
-fn bulk_hit_error(index: usize, message: String) -> ReverseBulkHit {
+const fn bulk_hit_error(index: usize, message: String) -> ReverseBulkHit {
     ReverseBulkHit {
         index,
         place_id: None,
@@ -369,22 +390,6 @@ fn batch_item_error(item: &BatchItem, message: &str) -> BatchResult {
     }
 }
 
-/// Builds error results for a panicked worker's index range.
-#[cfg(test)]
-fn batch_worker_error(
-    items: &[BatchItem],
-    range: std::ops::Range<usize>,
-    message: &str,
-) -> Vec<(usize, BatchResult)> {
-    range
-        .filter_map(|idx| {
-            items
-                .get(idx)
-                .map(|item| (idx, batch_item_error(item, message)))
-        })
-        .collect()
-}
-
 fn push_best(best: &mut Vec<(f32, PlaceId)>, score: f32, id: PlaceId, limit: usize) {
     if limit == 0 {
         return;
@@ -403,48 +408,5 @@ fn push_best(best: &mut Vec<(f32, PlaceId)>, score: f32, id: PlaceId, limit: usi
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn batch_worker_error_fills_range_with_item_ids() {
-        let items = vec![
-            BatchItem::Geocode {
-                id: Some("a".into()),
-                q: "Paris".into(),
-                limit: Some(1),
-            },
-            BatchItem::Reverse {
-                id: Some("b".into()),
-                lat: 48.0,
-                lon: 2.0,
-                limit: Some(1),
-            },
-            BatchItem::Geocode {
-                id: None,
-                q: "Louvre".into(),
-                limit: None,
-            },
-        ];
-        let filled = batch_worker_error(&items, 1..3, "batch worker panicked");
-        assert_eq!(filled.len(), 2);
-        assert_eq!(filled[0].0, 1);
-        assert_eq!(filled[0].1.id.as_deref(), Some("b"));
-        assert_eq!(filled[0].1.error.as_deref(), Some("batch worker panicked"));
-        assert!(filled[0].1.results.is_empty());
-        assert_eq!(filled[1].0, 2);
-        assert_eq!(filled[1].1.id, None);
-        assert_eq!(filled[1].1.error.as_deref(), Some("batch worker panicked"));
-    }
-
-    #[test]
-    fn push_best_keeps_descending_top_n() {
-        let mut best = Vec::new();
-        push_best(&mut best, 0.2, 2, 3);
-        push_best(&mut best, 0.9, 9, 3);
-        push_best(&mut best, 0.5, 5, 3);
-        push_best(&mut best, 0.1, 1, 3);
-        push_best(&mut best, 0.7, 7, 3);
-        assert_eq!(best, vec![(0.9, 9), (0.7, 7), (0.5, 5)]);
-    }
-}
+#[path = "service_tests.rs"]
+mod tests;
