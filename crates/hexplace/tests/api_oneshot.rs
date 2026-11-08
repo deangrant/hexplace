@@ -329,6 +329,45 @@ async fn batch_empty_items_is_bad_request() -> TestResult {
 }
 
 #[tokio::test]
+async fn reverse_bulk_json_over_cap_is_bad_request() -> TestResult {
+    let test = seed_app()?;
+    let over = Engine::MAX_BATCH_ITEMS + 1;
+    let mut body = String::from("{\"points\":[");
+    for i in 0..over {
+        if i > 0 {
+            body.push(',');
+        }
+        body.push_str("[0,0]");
+    }
+    body.push_str("]}");
+    let response = test
+        .app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/reverse/bulk")
+                .header("content-type", "application/json")
+                .header("accept", "application/x-ndjson")
+                .body(Body::from(body))?,
+        )
+        .await?;
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "JSON reverse-bulk over MAX_BATCH_ITEMS must be rejected during capped deserialize"
+    );
+    let json = body_json(response).await?;
+    let Some(message) = json["error"].as_str() else {
+        return Err("error responses must include an error string".into());
+    };
+    assert!(
+        message.contains("limited"),
+        "over-cap reverse-bulk error must mention the limit: {message}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn reverse_bulk_empty_points_is_bad_request() -> TestResult {
     let test = seed_app()?;
     let response = test
