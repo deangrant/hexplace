@@ -19,4 +19,3 @@ Rules:
 - Core must not depend on engine or HTTP types
 - Prefer static dispatch inside the engine; HTTP holds `Arc<Engine>`
 - Put new domain traits in core; wire concretes at the composition root
-- For deeper SOLID guidance, use skill `solid-rust`
