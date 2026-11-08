@@ -1,13 +1,6 @@
 // Eval fixture for rust-coding-standard case 5. Do not edit.
 
 use std::sync::Mutex;
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum LoadError {
-    #[error("parse failed")]
-    Parse,
-}
 
 pub struct Worker {
     name: String,
@@ -31,7 +24,7 @@ impl Worker {
         }
     }
 
-    pub fn parse_count(raw: &str) -> Result<u32, LoadError> {
+    pub fn parse_count(raw: &str) -> Result<u32, String> {
         Ok(raw.parse::<u32>().unwrap())
     }
 
@@ -40,7 +33,7 @@ impl Worker {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub fn run(&self, input: &str) -> Result<String, LoadError> {
+    pub fn run(&self, input: &str) -> Result<String, String> {
         println!("running with {input}");
         let owned = input.to_owned();
         let copy = owned.clone();

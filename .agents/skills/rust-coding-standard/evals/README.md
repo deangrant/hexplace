@@ -14,7 +14,7 @@ output. They follow
 | File | Case | Contents |
 | --- | --- | --- |
 | `undocumented.rs` | 2 | Public items with no rustdoc; one private helper; a slice index |
-| `concrete_dependency.rs` | 3 | `process_chunk` constructs `AzureBlobSink` and calls only `put` |
+| `concrete_dependency.rs` | 3 | `process_chunk` constructs `ObjectStoreSink` and calls only `put` |
 | `review_me.rs` | 5 | Nine style and lint violations for a review |
 | `held_lock.rs` | 10 | Mutex guard held across `.await`; `Rc<RefCell<_>>` on a public type |
 | `legacy_parser.rs` | 11 | `&Vec`, `get_` getter, `+` concatenation; empty input returns `"unknown"` |

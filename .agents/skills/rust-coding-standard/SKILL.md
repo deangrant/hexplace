@@ -2,90 +2,84 @@
 name: rust-coding-standard
 description: >-
   Use this skill whenever you write, change, review, refactor, or debug Rust
-  code in this repository (.rs files, Cargo crates, clippy or rustfmt output),
-  even if the user does not mention style, design, or best practices. It sets
-  the repository's Rust standard: 100-column lines, 500-line files, doc
-  comments, traits and dependency injection, ownership, Result and Option error
-  handling, exit codes, async, and tests. It does not cover Go code or Polars
-  query tuning (use rust-polars).
-compatibility: Requires cargo, nightly rustfmt, and clippy for the handback checklist.
-allowed-tools: Bash(cargo fmt:*) Bash(cargo +nightly fmt:*) Bash(cargo clippy:*) Bash(cargo test:*) Read Grep
+  code (.rs files, Cargo crates, clippy or rustfmt output), even if the user
+  does not mention style, design, or best practices. It sets a portable Rust
+  standard: 100-column lines, 500-line files, doc comments, traits and
+  dependency injection, ownership, Result and Option error handling, process
+  exit codes, async, and tests.
+compatibility: Requires cargo, rustfmt, and clippy for the handback checklist.
+allowed-tools: Bash(cargo fmt:*) Bash(cargo clippy:*) Bash(cargo test:*) Read Grep
 metadata:
   author: 9986059+deangrant@users.noreply.github.com
-  version: "1.0"
+  version: "1.1"
 ---
 
 # Rust Coding Standard
 
-Follow this standard for every Rust change in this repository. The build
-enforces part of it; review enforces the rest.
+Follow this standard for every Rust change. Prefer matching the repository's
+existing `rustfmt.toml`, `clippy.toml`, and workspace lint configuration when
+present; never loosen those files to make code pass. Where the repo is silent,
+apply the rules below.
 
-- **Enforced by the build**: lints in `Cargo.toml` and `clippy.toml`, formatting
-  in `rustfmt.toml`, and the CI conventions job. Never write code these files
-  reject, and never change them to make code pass.
-- **Enforced by review**: the style, design, and idiom rules below.
-
-Read the rules in this file first. Open a file under `references/` only when
-the task needs more detail.
+Read this file first. Open a file under `references/` only when the task needs
+more detail.
 
 ---
 
-# Enforced by the build
+# Baseline expectations
 
-The build fails when code breaks any rule below.
+Treat these as required practice. Repositories often enforce a subset via
+`Cargo.toml`, `clippy.toml`, `rustfmt.toml`, and CI.
 
-- **Toolchain**: stable `1.99.0`, edition 2024 (`rust-toolchain.toml` /
-  `rust-version`). Use nightly only for `cargo +nightly fmt` (nightly-only
-  rustfmt options).
-- **Lint inheritance**: every crate must set `[lints] workspace = true`.
-  `[workspace.lints.rust]` denies warnings. Never put lint levels in source
-  (`#![deny(...)]` / `#![allow(...)]`).
-- **Forbidden** (`forbid`): `unsafe_code`, `non_ascii_idents`.
-- **Denied** (`deny`), panics: `unwrap_used`, `expect_used`, `panic`,
-  `panic_in_result_fn`, `unwrap_in_result`.
-- **Denied**, output and process: `print_stdout`, `print_stderr`, `dbg_macro`,
-  `todo`, `unimplemented`, `exit`, `mem_forget`.
-- **Denied**, async and size: `await_holding_lock`, `large_futures`,
-  `large_stack_arrays`, `large_types_passed_by_value`.
-- **Denied**, hygiene: `allow_attributes`, `allow_attributes_without_reason`,
-  `missing_assert_message` (non-test code; tests are review-enforced),
-  `clone_on_ref_ptr`, `rc_buffer`, `rc_mutex`.
-- **Denied**, docs: `missing_docs`, `missing_debug_implementations`,
-  `missing_copy_implementations`, `rustdoc::all`.
-- **Clippy groups**: `all`, `pedantic`, `nursery`, and `cargo` at `deny`.
-  `multiple_crate_versions` is the only cargo relaxation.
-- **`cast_*`**: not relaxed. Prefer `TryFrom`; otherwise
+- **Toolchain**: use the repository's `rust-toolchain.toml` / `rust-version`
+  when present; otherwise current stable. Use nightly only when a documented
+  rustfmt option requires it (`cargo +nightly fmt`).
+- **Lint inheritance**: prefer `[lints] workspace = true` and a single
+  `[workspace.lints]` table. Avoid crate-level `#![deny(...)]` /
+  `#![allow(...)]` in source.
+- **Forbidden** (`forbid` when the workspace sets it): `unsafe_code`,
+  `non_ascii_idents`.
+- **Avoid panics in production paths**: do not call `.unwrap()`, `.expect()`,
+  or `panic!`. Prefer `?`, `let-else`, and `ok_or` / `ok_or_else`.
+- **Avoid ad-hoc process I/O**: no `println!`, `eprintln!`, or `dbg!` in
+  library or application code (build scripts that emit `cargo:` lines are the
+  exception). Prefer `tracing` (or the repo's logging stack) on stderr.
+- **Async hygiene**: never hold a lock or a `RefCell` borrow across `.await`.
+- **Size**: prefer small functions and types; avoid very large futures, stack
+  arrays, or by-value moves of huge types when references suffice.
+- **Docs**: document public items; implement `Debug` for public types.
+- **Casts**: prefer `TryFrom`; otherwise
   `#[expect(clippy::cast_..., reason = "...")]` at the site.
-- **Limits** (`clippy.toml`): one `bool` parameter (`max-fn-params-bools = 1`),
-  cognitive complexity 8, 100 lines per function, type complexity 200.
 - **Exit**: return `std::process::ExitCode` from `main`; never
   `std::process::exit`.
-- **CI conventions job**: no `.rs` or `.go` file over 500 lines; exact `=` pins
-  in `[workspace.dependencies]`; no direct `thiserror` dependency.
+- **Files**: keep every `.rs` file under **500** lines. Split near 450 along a
+  real seam.
 
 ---
 
 # Part 1: Style
 
 Detail: [references/style.md](references/style.md).
-`rustfmt.toml` at the repository root is the source of truth for formatting.
+`rustfmt.toml` at the repository root is the source of truth for formatting
+when present.
 
 - Keep every line at or under **100 characters**.
 - Keep every `.rs` file under **500 lines**. Split near 450 lines along a real
   seam.
 - Use spaces only and **4-space** indent. Put trailing commas in multi-line
-  constructs. Keep method chains within `chain_width = 80`. Use one
-  `#[derive(...)]` with comma-separated traits.
+  constructs. Keep method chains within `chain_width = 80` when rustfmt sets
+  it. Use one `#[derive(...)]` with comma-separated traits.
 - Separate items with zero or one blank line. Strip trailing whitespace.
 - Write comments that explain **why**, not what. Prefer `//` line comments.
-  Wrap comment prose by hand near 80–100 columns (`wrap_comments` is off).
+  Wrap comment prose by hand near 80–100 columns (`wrap_comments` is often
+  off).
 - Put `///` outer docs before attributes. Document every public module with
   `//!`. Keep the first sentence on one line and at most 15 words. Full rules:
   [references/documentation.md](references/documentation.md).
 - Prefer early returns and `let-else`. Omit the `get_` prefix on getters.
   Implement `Debug` for every public type.
 - Override lints only with `#[expect(lint, reason = "...")]` on the narrowest
-  item. Never use `#[allow]` (`allow_attributes` is denied).
+  item. Prefer `#[expect]` over `#[allow]`.
 
 ---
 
@@ -143,41 +137,44 @@ Detail: [references/idioms.md](references/idioms.md).
 - Recover a poisoned lock with
   `unwrap_or_else(std::sync::PoisonError::into_inner)`.
 - Give every test assertion a message that states **why** the value must
-  hold or **which contract** it verifies (review rule; Clippy skips
-  `missing_assert_message` inside test functions). Do not restate the
-  expression, embed concrete inputs or outputs, use a generic label
-  (`"expected Config"`, `"expected Ok"`, `"values should be equal"`), or
-  a bare property name (`"reg_id"`).
-- Hand-write `Display` and `Error` (**no `thiserror`**). Use `anyhow` with
-  `.context(...)` only at the binary edge.
-- Map every failure onto the five exit codes in
-  `crates/common/src/exit.rs`. Treat an unclassified error as `Internal`, not
-  `Transient`.
-- Send diagnostics through `tracing` to **stderr**. Send wide events to
-  **stdout** through telemetry only. Never use `println!`, `eprintln!`, or
-  `dbg!` (`print_stdout` / `print_stderr` / `dbg_macro` are denied; build
-  scripts that emit `cargo:` lines are the exception).
+  hold or **which contract** it verifies. Do not restate the expression,
+  embed concrete inputs or outputs, use a generic label (`"expected Config"`,
+  `"expected Ok"`, `"values should be equal"`), or a bare property name
+  (`"reg_id"`).
+- Prefer typed errors that implement `std::error::Error` + `Display` +
+  `Debug` and are `Send + Sync + 'static`. `thiserror` is fine for derives;
+  hand-written impls are fine too. Use `anyhow` (or similar) with context
+  only at the binary edge, not in library public APIs.
+- From `main`, return `std::process::ExitCode`. Map distinct failure classes
+  (for example config versus I/O versus internal) to stable codes when the
+  binary defines them. Treat unclassified errors as internal, not as
+  "retryable", unless the contract says otherwise.
+- Send diagnostics through `tracing` (or the repo logger) to **stderr**.
+  Never use `println!`, `eprintln!`, or `dbg!` outside build scripts.
 - Never hold a lock or a `RefCell` borrow across `.await`.
-- Do not write `unsafe` blocks or functions (`unsafe_code = "forbid"`).
-- Prefer the standard library and crates already in the tree. Use exact `=`
-  pins in `[workspace.dependencies]`.
-- Keep `BlobSource` and `BlobSink` synchronous over the async Azure SDK,
-  because transform phases are Rayon pipelines.
+- Do not write `unsafe` blocks or functions unless the repository explicitly
+  allows and reviews them.
+- Prefer the standard library and crates already in the workspace. Hoist
+  shared versions into `[workspace.dependencies]` when the repo uses that
+  pattern.
+- Keep CPU-bound synchronous pipelines sync at the trait boundary; do not
+  force async through layers that never `.await`.
 
 ---
 
 # Before you hand back code
 
-List these workspace commands by default:
+List these workspace commands by default (adjust if the repo documents
+different flags):
 
-1. Format: `cargo +nightly fmt --all`
-2. Lint: `cargo clippy --workspace --all-targets --locked -- -D warnings`
-3. Test: `cargo test --workspace --locked`
+1. Format: `cargo fmt --all`
+2. Lint: `cargo clippy --workspace --all-targets -- -D warnings`
+3. Test: `cargo test --workspace`
 
-You may also note a package-scoped `cargo test -p … --locked`. Do not
-replace the workspace list with only the package-scoped command.
+You may also note a package-scoped `cargo test -p …`. Do not replace the
+workspace list with only the package-scoped command.
 
-Review-only checks (the build does not catch these):
+Review-only checks (CI may not catch these):
 
 - [ ] One primary responsibility per type or module (SRP).
 - [ ] New behavior adds `impl`s or variants with minimal core edits (OCP).
@@ -187,8 +184,8 @@ Review-only checks (the build does not catch these):
   (DIP).
 - [ ] Public APIs take `&str`, `&[T]`, or `impl AsRef<_>`.
 - [ ] No clone exists only to silence the borrow checker.
-- [ ] Errors are hand-written `Error + Display + Send + Sync + 'static`.
-- [ ] Failures map to the five exit codes; unclassified is `Internal`.
+- [ ] Errors are proper `Error + Display + Send + Sync + 'static` types.
+- [ ] Binaries return `ExitCode`; unclassified failures are internal.
 - [ ] Assertion messages state a reason or contract, not an expression
   echo or `"expected Config"`-style label.
 

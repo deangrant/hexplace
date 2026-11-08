@@ -2,8 +2,7 @@
 
 Longer explanations and examples for Part 3 of [SKILL.md](../SKILL.md).
 Adapted from common Rust guides (including BeautifulRust's rust-best-practices)
-to this repository's conventions: exact dependency pins, no `thiserror`, the
-five exit codes, and the stdout / stderr observability split.
+into a portable coding standard.
 
 Naming, lint overrides, and formatting live in [style.md](style.md) and
 [SKILL.md](../SKILL.md). This file owns ownership, types, errors, concurrency,
@@ -151,74 +150,68 @@ Summary naming rules live in [style.md](style.md). Additions for API design:
 | --- | --- |
 | Absence is normal (`first()`, `checked_add`) | `Option<T>` |
 | The caller may need to know what went wrong | `Result<T, E>` |
-| A bug or violated invariant in production code | Return `Err` / `Internal` |
+| A bug or violated invariant in production code | Return `Err` |
 
-**The build denies panics.** `unwrap_used`, `expect_used`, `panic`, and
-`panic_in_result_fn` are workspace `deny` lints, including in tests and
-`main`. Do not write `unwrap()`, `expect(...)`, or `panic!`. Prefer `?`,
-`let-else`, and `ok_or` / `ok_or_else`.
+**Do not panic on recoverable paths.** Avoid `unwrap()`, `expect(...)`, and
+`panic!` in production code, tests, and `main`. Prefer `?`, `let-else`, and
+`ok_or` / `ok_or_else`. Workspace lint configs often deny these Clippy lints;
+follow them when present.
 
 **Give every test assertion a reason-style message.** Use
-`assert!(cond, "…")` / `assert_eq!(got, want, "…")`. This is a review
-rule: Clippy's `missing_assert_message` is denied for non-test code and
-does not fire inside test functions. A message states **why** the value
-must hold or **which contract** it verifies. It does not restate the
-expression, embed concrete inputs or outputs, use a generic label, or
-name only the property under check.
+`assert!(cond, "…")` / `assert_eq!(got, want, "…")`. A message states **why**
+the value must hold or **which contract** it verifies. It does not restate the
+expression, embed concrete inputs or outputs, use a generic label, or name
+only the property under check.
 
 ```rust
 // Good: names the rule or contract.
 assert_eq!(
-    Exit::Success as u8,
-    0,
-    "ADR 0009 maps Success to the stable Batch success exit code"
+    parse_port("8080").ok(),
+    Some(8080),
+    "decimal port strings parse to the matching u16"
 );
 assert!(
     matches!(error, Error::Config(_)),
-    "omitting a required container argument is a configuration fault"
+    "omitting a required path argument is a configuration fault"
 );
 
 // Bad: expression echo, generic label, or bare property name.
-assert_eq!(Exit::Success as u8, 0, "Exit::Success as u8 == 0");
+assert_eq!(parse_port("8080").ok(), Some(8080), "parse_port(\"8080\").ok()");
 assert!(matches!(error, Error::Config(_)), "expected Config");
 assert_eq!(columns.reg_id, &["r1"], "reg_id");
 assert_eq!(got, want, "values should be equal");
 ```
 
 Escape `{` / `}` as `{{` / `}}` when the text embeds Rust source that
-contains braces. Never paste `Error::Transient { .. }` into a message;
-rustc treats `{ .. }` as format syntax and fails the build. Longer
-messages wrap under the 100-column limit and add lines: if a file
-nears 500 lines, split along a real seam rather than shortening the
-message into an echo.
+contains braces. Never paste `Error::Timeout { .. }` into a message; rustc
+treats `{ .. }` as format syntax and fails the build. Longer messages wrap
+under the 100-column limit and add lines: if a file nears 500 lines, split
+along a real seam rather than shortening the message into an echo.
 
 **Pattern-match instead of check-then-unwrap:** `if let Some(v) = opt { .. }`
 or `let Some(v) = opt else { return .. };`, never
 `if opt.is_some() { opt.unwrap() }`.
 
 **Recover lock poisoning; do not panic on it:**
-`.lock().unwrap_or_else(std::sync::PoisonError::into_inner)`. `expect` is
-denied, so recovering with `into_inner` is the repository pattern (see
-`crates/common/src/blob/memory.rs`).
+`.lock().unwrap_or_else(std::sync::PoisonError::into_inner)`. Prefer
+recovering with `into_inner` over `.expect(...)` or `.unwrap()`.
 
-**Error types in this repository:**
+**Error types:**
 
 - Implement `std::error::Error` (requires `Debug` + `Display`), be
   `Send + Sync + 'static`, and implement `source()` for wrapped causes. Never
   use `()`, `String`, or `Box<dyn Error>` as a library's public error type.
-- **Hand-write `Display` and `Error`.** `thiserror` is deliberately absent from
-  the workspace (see the root `Cargo.toml` comment).
+- Derive with `thiserror` or hand-write `Display` and `Error`; both are fine.
 - Write `Display` messages as lowercase, concise text with no trailing
   punctuation: `"invalid header length"`.
 - Implement `From<Upstream>` so `?` converts. Use `map_err` only for foreign
   errors or to add context.
-- Use **`anyhow` with `.context(...)` only at the binary edge**, never in a
-  library's public API.
-- **Map every failure onto the five exit codes** in
-  [`crates/common/src/exit.rs`](../../../../crates/common/src/exit.rs): Config
-  (1), Input (2), Transient (3), Internal (4). An unclassified error is
-  `Internal`, not `Transient`: guessing retryable spends nodes discovering that
-  a bug is still a bug.
+- Use **`anyhow` (or similar) with `.context(...)` only at the binary edge**,
+  never in a library's public API.
+- From binaries, return `std::process::ExitCode` and map distinct failure
+  classes (config, invalid input, retryable I/O, internal) to stable codes when
+  the program defines them. An unclassified error is internal, not "retryable":
+  guessing retryable burns retries on bugs.
 - Destructors never fail, panic, or block. Provide `close(self) -> Result<()>`
   for fallible teardown and let `Drop` do best-effort cleanup.
 
@@ -243,11 +236,9 @@ denied, so recovering with `into_inner` is the repository pattern (see
   function that matches on it.
 - Turn **magic numbers** into named `const`s with a doc comment that says where
   the value comes from.
-- **Logging:** structured diagnostics through `tracing` go to **stderr**. Wide
-  events go to **stdout** through telemetry only. The build denies
-  `print_stdout`, `print_stderr`, and `dbg_macro`: never `println!`,
-  `eprintln!`, or `dbg!` (build scripts that emit `cargo:` lines are the
-  exception). See `AGENTS.md` observability.
+- **Logging:** structured diagnostics through `tracing` (or the repository's
+  logger) go to **stderr**. Never `println!`, `eprintln!`, or `dbg!` (build
+  scripts that emit `cargo:` lines are the exception).
 
 ## Concurrency and async
 
@@ -273,18 +264,18 @@ denied, so recovering with `into_inner` is the repository pattern (see
 - Long CPU-bound work inside async must yield or move to `spawn_blocking`.
 - Library code does not spawn raw threads or assume a runtime; take an executor
   or `impl AsyncRead` / `impl Read` from the caller.
-- **In this repository:** `BlobSource` and `BlobSink` are synchronous because
-  the phases that use them are synchronous Rayon pipelines, even though the
-  Azure SDK underneath is async. Prefer that pattern over leaking async into
-  the transform pipeline.
+- Keep CPU-bound synchronous pipelines sync at the trait boundary. Prefer a
+  sync consumer trait over leaking async through layers that never `.await`.
 
 ## Unsafe and FFI
 
-- The build forbids `unsafe_code` in `[workspace.lints.rust]`. Do not write
-  `unsafe` blocks, `unsafe fn`, or `unsafe impl`. There is no override.
+- Prefer safe Rust. Do not write `unsafe` blocks, `unsafe fn`, or `unsafe impl`
+  unless the repository explicitly allows them and reviews each site.
 - Prefer safe std and crates already in the tree. If a third-party crate needs
-  `unsafe` internally, do not re-export or copy that `unsafe` into this tree.
-- FFI is out of scope for application crates here. Do not add C bindings.
+  `unsafe` internally, do not re-export or copy that `unsafe` into application
+  code.
+- Avoid adding FFI/C bindings to application crates unless the task requires
+  them and the unsafe boundary is documented.
 
 ## Tests
 
@@ -301,7 +292,7 @@ denied, so recovering with `into_inner` is the repository pattern (see
   I/O.
 - Fuzz parsers of untrusted input with `cargo fuzz`.
 - Assertions get a reason-style message so failures name the contract:
-  `assert_eq!(got, want, "registration ids stay in CSV row order")`.
+  `assert_eq!(got, want, "parsed ids stay in input order")`.
   See also the assertion-message rule above.
 
 ## Performance
@@ -313,25 +304,24 @@ Design for usability first and optimize after measuring. When you do:
 - Prefer `Box<[T]>`, `Box<str>`, `Arc<str>` for long-lived immutable sequences.
 - Call `shrink_to_fit` on long-lived collections built without a reservation.
 - Derive `Copy` for small plain types and never for large ones.
-
-**In this repository:** jemalloc is present because Polars allocates heavily;
-that is a measured carve-out, not a preference. For DataFrame work follow the
-[`rust-polars`](../../rust-polars/SKILL.md) skill.
+- Custom allocators and similar carve-outs need a measured justification, not
+  habit.
 
 ## Dependencies and crates
 
 - Prefer the standard library and crates already in the tree. Fewer
   dependencies means a smaller binary, a shorter build, and less attack
-  surface. See `AGENTS.md` "Dependencies: stdlib first".
-- Use **exact `=` pins** hoisted into `[workspace.dependencies]`. The
-  `version_*` build scripts read those pins; a non-exact pin makes the key
-  disappear. Do **not** switch to version ranges.
-- Configure lints once in `[workspace.lints]`; each crate opts in with
-  `[lints] workspace = true`. Never put lint levels in source
+  surface.
+- Prefer hoisting shared versions into `[workspace.dependencies]` and
+  inheriting with `workspace = true` when the repository uses that pattern.
+  Follow the repo's existing pin style (exact `=` or caret ranges); do not
+  invent a new policy.
+- Prefer configuring lints once in `[workspace.lints]`; each crate opts in with
+  `[lints] workspace = true`. Avoid lint levels in source
   (`#![deny(...)]` / `#![allow(...)]`). Summary: [SKILL.md](../SKILL.md)
-  "Enforced by the build".
-- Keep features additive and bare-named: `std`, `serde`, `alloc`. Never
-  `no-std` or a feature that removes a public item.
+  "Baseline expectations".
+- Keep features additive and bare-named: `std`, `serde`, `alloc`. Avoid
+  features that remove a public item.
 - Re-export individually (`pub use foo::{A, B};`), never with a glob.
 
 ## Refactoring existing code

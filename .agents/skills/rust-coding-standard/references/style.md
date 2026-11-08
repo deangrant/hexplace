@@ -84,9 +84,9 @@ Full rules: [documentation.md](documentation.md). Summary rules also appear in
 
 ## Functions
 
-- The build fails when a function exceeds 100 lines or cognitive complexity 8
-  (`clippy.toml`). Prefer smaller functions in review (about 40–50 lines) when
-  a clear seam exists.
+- Prefer functions under about 100 lines and low cognitive complexity. Prefer
+  even smaller functions in review (about 40–50 lines) when a clear seam
+  exists. Honor `clippy.toml` limits when the repository sets them.
 - Prefer early returns over deep nesting. Use `let-else` and `if let` to
   reduce nesting.
 - Break long expressions early so indentation does not drift right.
@@ -112,9 +112,9 @@ Full rules: [documentation.md](documentation.md). Summary rules also appear in
 - Override a lint only with
   `#[expect(clippy::name, reason = "...")]` on the narrowest item. `expect`
   warns when the lint stops firing.
-- Never use `#[allow]` (`allow_attributes` is denied).
-- Never put lint levels in source; `[workspace.lints]` already denies
-  warnings.
+- Prefer `#[expect]` over `#[allow]`. Avoid blanket crate-level `#![allow]`.
+- Prefer configuring lints in `[workspace.lints]` rather than putting lint
+  levels in source.
 
 ## Tests
 
